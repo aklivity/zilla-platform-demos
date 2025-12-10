@@ -1,0 +1,360 @@
+name: Kafka-to-AutoMQ-via-Zilla-Platform
+services:
+  gateway:
+    container_name: "gateway"
+    image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-develop-SNAPSHOT}
+    restart: unless-stopped
+    hostname: gateway.env.data.plane.net
+    configs:
+      - source: zilla.yaml
+        target: /etc/zilla/zilla.yaml
+        mode: 0666
+    volumes:
+      - gateway-data:/var/run/zilla
+      - gateway-tls:/etc/zilla/tls:ro
+    ports:
+      - 9094:9094
+      - 8082:8082
+    environment:
+      ZILLA_PLATFORM_LICENSE_KEY: ${ZILLA_PLATFORM_LICENSE_KEY}
+      ZILLA_PLATFORM_BOOTSTRAP_TOKEN: ${ZILLA_PLATFORM_BOOTSTRAP_TOKEN}
+    command: bootstrap -v -e -l -w 1 --platform http://zilla.platform.net:8081/ -Pzilla.binding.socks.debug=true
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      gateway-init:
+        condition: service_completed_successfully
+    networks:
+      bootstrap-plane:
+      data-plane:
+        aliases:
+          - orders-api-v0.staging.platform.net
+          - orders-api-v1.staging.platform.net
+          - orders-api-v2.staging.platform.net
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '2'
+          memory: 1G
+
+  kafka:
+    container_name: "kafka"
+    image: bitnamilegacy/kafka:3.5
+    restart: unless-stopped
+    hostname: kafka.env.data.plane.net
+    expose:
+      - 9092
+    healthcheck:
+      test: /opt/bitnami/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka.env.data.plane.net:9092 || exit 1
+      interval: 1s
+      timeout: 60s
+      retries: 60
+    environment:
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_BROKER_ID: "1"
+      KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@127.0.0.1:9093"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LOG_DIRS: "/tmp/logs"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_LISTENERS: "CLIENT://:9092,INTERNAL://:29092,CONTROLLER://:9093"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,INTERNAL://kafka.env.data.plane.net:29092"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - data-plane
+
+  minio:
+    container_name: "minio"
+    image: minio/minio:RELEASE.2025-05-24T17-08-30Z
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_DOMAIN: minio
+    ports:
+      - "9000:9000"  # MinIO API
+      - "9001:9001"  # MinIO Console
+    command: [ "server", "/data", "--console-address", ":9001" ]
+    networks:
+      - data-plane
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://minio:9000/minio/health/live" ]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  mc:
+    container_name: "mc"
+    image: minio/mc:RELEASE.2025-05-21T01-59-54Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc rm -r --force minio/automq-data;
+      /usr/bin/mc rm -r --force minio/automq-ops;
+      /usr/bin/mc mb minio/automq-data;
+      /usr/bin/mc mb minio/automq-ops;
+      /usr/bin/mc anonymous set public minio/automq-data;
+      /usr/bin/mc anonymous set public minio/automq-ops;
+      tail -f /dev/null
+      "
+    networks:
+      - data-plane
+
+  automq:
+    container_name: "automq"
+    image: automqinc/automq:1.5.5
+    hostname: automq.env.data.plane.net
+    expose:
+      - 9095
+    stop_grace_period: 1m
+    environment:
+      KAFKA_S3_ACCESS_KEY: minioadmin
+      KAFKA_S3_SECRET_KEY: minioadmin
+      KAFKA_HEAP_OPTS: -Xms1g -Xmx4g -XX:MetaspaceSize=96m -XX:MaxDirectMemorySize=1G
+      CLUSTER_ID: 5XF4fHIOTfSIqkmje2KFlg
+    command:
+      - bash
+      - -c
+      - |
+        /opt/automq/kafka/bin/kafka-server-start.sh \
+        /opt/automq/kafka/config/kraft/server.properties \
+        --override cluster.id=$$CLUSTER_ID \
+        --override node.id=0 \
+        --override controller.quorum.voters=0@automq.env.data.plane.net:9093 \
+        --override controller.quorum.bootstrap.servers=automq.env.data.plane.net:9093 \
+        --override listeners=PLAINTEXT://:9095,CONTROLLER://:9093 \
+        --override advertised.listeners=PLAINTEXT://automq.env.data.plane.net:9095 \
+        --override s3.data.buckets='0@s3://automq-data?region=us-east-1&endpoint=http://minio:9000&pathStyle=true' \
+        --override s3.ops.buckets='1@s3://automq-ops?region=us-east-1&endpoint=http://minio:9000&pathStyle=true' \
+        --override s3.wal.path='0@s3://automq-data?region=us-east-1&endpoint=http://minio:9000&pathStyle=true'
+    networks:
+      - data-plane
+    depends_on:
+      - minio
+      - mc
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.1.0
+    restart: unless-stopped
+    hostname: schema-registry.env.data.plane.net
+    container_name: schema-registry
+    depends_on:
+      - kafka
+    expose:
+      - 8081
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry.env.data.plane.net
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka.env.data.plane.net:9092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: schema-registry
+      SCHEMA_REGISTRY_MASTER_ELIGIBILITY: "true"
+      SCHEMA_REGISTRY_COMPATIBILITY_LEVEL: FULL
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
+    networks:
+      - data-plane
+
+  mirrormaker:
+    container_name: "mirrormaker"
+    image: 'wpietri/mirror-maker:2'
+    depends_on:
+      - kafka
+      - automq
+    environment:
+      - SOURCE=kafka.env.data.plane.net:9092
+      - DESTINATION=automq.env.data.plane.net:9095
+      - TOPICS=.*
+    networks:
+      - data-plane
+
+  kafka-init:
+    container_name: "kafka-init"
+    image: bitnamilegacy/kafka:3.5
+    hostname: kafka-init.env.data.plane.net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+    networks:
+      - data-plane
+    volumes:
+      - gateway-tls:/etc/tls:ro
+    environment:
+      ACCESS_KEY: ${ACCESS_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        set -e
+        echo "Waiting for Kafka to be ready..."
+        sleep 5
+
+        echo "Creating topic: orders.created..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:9092 \
+          --create --if-not-exists \
+          --topic orders.created \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo "Waiting for Schema Registry to be ready..."
+        until curl -sf http://schema-registry.env.data.plane.net:8081/subjects > /dev/null 2>&1; do
+          echo "Waiting for schema registry..."
+          sleep 2
+        done
+
+        echo "Registering JSON schema for orders.created-value..."
+        curl -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+          --data '{"schemaType":"JSON","schema":"{\"type\":\"object\",\"properties\":{\"orderId\":{\"type\":\"string\"},\"status\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"}},\"required\":[\"orderId\",\"status\",\"timestamp\"]}"}' \
+          http://schema-registry.env.data.plane.net:8081/subjects/orders.created-value/versions
+
+        echo ""
+        echo "✓ Kafka initialization complete!"
+        echo "  Topic: orders.created (3 partitions, 1 replica)"
+        echo "  Schema: orders.created-value registered"
+
+  gateway-init:
+    container_name: "gateway-init"
+    image: eclipse-temurin:17-jdk
+    volumes:
+      - gateway-tls:/etc/zilla/tls:rw
+    configs:
+      - source: tls.init.sh
+        target: /tmp/tls.init.sh
+        mode: 0555
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        exec /tmp/tls.init.sh
+    working_dir: /etc/zilla
+
+networks:
+  data-plane:
+    name: data-plane
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "10.6.0.0/16"
+          gateway: "10.6.0.1"
+  bootstrap-plane:
+    name: quickstart_bootstrap-plane
+    external: true
+
+volumes:
+  gateway-data:
+  gateway-tls:
+
+configs:
+  zilla.yaml:
+    content: |
+      name: "gateway"
+      vaults:
+        server:
+          type: "filesystem"
+          options:
+            keys:
+              store: "tls/server/keys"
+              password: "generated"
+        client:
+          type: "filesystem"
+          options:
+            trust:
+              store: "tls/client/trust"
+              type: "pkcs12"
+              password: "generated"
+
+  tls.init.sh:
+    content: |
+      #!/bin/bash
+      set -ex
+
+      SERVER_CA_ALIAS=serverca
+      SERVER_CA_PASS=generated
+      SERVER_CERT_ALIAS=staging.platform.net
+      SERVER_CERT_PASS=generated
+      SERVER_CERT_SAN=dns:*.staging.platform.net
+      CLIENT_TRUST_PASS=generated
+
+      # tls/* config
+      mkdir -p tls/server tls/client
+      
+      if [ ! -f tls/server/signers ]; then
+        echo 'Generating Certificate Authority...'
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" -keypass "$$SERVER_CA_PASS" \
+          -genkeypair \
+          -alias "$$SERVER_CA_ALIAS" \
+          -dname "C=US, ST=California, O=Aklivity, OU=Development, CN=$$SERVER_CA_ALIAS" \
+          -validity 3650 \
+          -keyalg RSA \
+          -ext bc:c
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" \
+          -exportcert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -rfc > tls/server/$$SERVER_CA_ALIAS.crt
+      fi
+      
+      if [ ! -f tls/server/keys ]; then
+        echo 'Generating server keypair and CSR...'
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -genkeypair \
+          -alias "$$SERVER_CERT_ALIAS" -dname "C=US, ST=California, O=Aklivity, OU=Development, CN=$$SERVER_CERT_ALIAS" \
+          -validity 3650 \
+          -keyalg RSA
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -alias "$$SERVER_CERT_ALIAS" \
+          -certreq \
+          -rfc > tls/server/$$SERVER_CERT_ALIAS.csr
+      fi
+      
+      if [ ! -f tls/server/$$SERVER_CERT_ALIAS.crt ]; then
+        echo 'Signing server certificate...'
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" -keypass "$$SERVER_CA_PASS" \
+          -gencert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -ext ku:c=dig,keyenc \
+          -ext SAN="$$SERVER_CERT_SAN" \
+          -validity 1800 \
+          -rfc < tls/server/$$SERVER_CERT_ALIAS.csr > tls/server/$$SERVER_CERT_ALIAS.crt
+      
+        echo 'Importing certificate chain...'
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -importcert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -rfc -noprompt < tls/server/$$SERVER_CA_ALIAS.crt
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -importcert \
+          -alias "$$SERVER_CERT_ALIAS" \
+          -rfc < tls/server/$$SERVER_CERT_ALIAS.crt
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -delete \
+          -alias "$$SERVER_CA_ALIAS" \
+          -noprompt
+      fi
+      
+      if [ ! -f tls/client/trust ]; then
+        echo 'Creating client truststore...'
+        keytool -keystore tls/client/trust -storepass "$$CLIENT_TRUST_PASS" -keypass "$$CLIENT_TRUST_PASS" \
+          -importcert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -rfc \
+          -noprompt < tls/server/$$SERVER_CA_ALIAS.crt
+      fi
+      
+      if [ ! -f tls/client/trust.jks ]; then
+        echo 'Converting truststore to JKS format...'
+        keytool -importkeystore \
+          -srckeystore tls/client/trust -srcstoretype PKCS12 -srcstorepass "$$CLIENT_TRUST_PASS" \
+          -destkeystore tls/client/trust.jks -deststoretype JKS -deststorepass "$$CLIENT_TRUST_PASS"
+      fi
