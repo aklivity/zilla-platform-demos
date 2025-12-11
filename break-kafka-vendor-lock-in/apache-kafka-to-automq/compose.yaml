@@ -175,6 +175,22 @@ services:
     networks:
       - data-plane
 
+  kafka-tools:
+    image: confluentinc/cp-schema-registry:8.1.0
+    hostname: kafka-tools.env.data.plane.net
+    networks:
+      - data-plane
+    environment:
+      ACCESS_KEY: ${ACCESS_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+    deploy:
+      replicas: 0
+    configs:
+      - source: orders.schema.json
+        target: /etc/schemas/orders.schema.json
+    volumes:
+      - gateway-tls:/etc/tls:ro
+
   kafka-init:
     container_name: "kafka-init"
     image: bitnamilegacy/kafka:3.5
@@ -358,3 +374,7 @@ configs:
           -srckeystore tls/client/trust -srcstoretype PKCS12 -srcstorepass "$$CLIENT_TRUST_PASS" \
           -destkeystore tls/client/trust.jks -deststoretype JKS -deststorepass "$$CLIENT_TRUST_PASS"
       fi
+
+  orders.schema.json:
+    content: |
+      {"type":"object","properties":{"orderId":{"type":"string"},"status":{"type":"string"},"timestamp":{"type":"integer"}},"required":["orderId","status","timestamp"]}
