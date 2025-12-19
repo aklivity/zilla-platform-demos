@@ -1,6 +1,21 @@
 # Kafka to AutoMQ via Zilla Platform
 
-This demo shows how to migrate from Apache Kafka to AutoMQ using Zilla Platform, without changing client code, security settings, or schemas.
+This demo walks through a Kafka migration journey: moving from an existing Apache Kafka deployment to AutoMQ without changing client code, security configuration, or schemas.
+
+The key idea is to separate data movement from application access, allowing migration to happen incrementally and with zero downtime.
+
+## Migration Steps
+
+* Start with an existing **Apache Kafka** cluster serving traffic
+* Provision a target **AutoMQ** cluster
+* Configure **MirrorMaker** to replicate topics and data between clusters
+* Attach both Kafka clusters to the **Zilla Platform**
+* Extract **AsyncAPI** contracts from existing topics and schemas
+* Define a governed **Data Product** representing current event streams
+* Deploy the data product against the Apache Kafka service.
+* Create a new version of the data product (`1.0.0`) and deploy it against **AutoMQ**
+* Migrate producers to publish through the new data product version
+* Gradually shift consumer traffic to the AutoMQ-backed version
 
 ## Prerequisites
 
