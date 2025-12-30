@@ -2,7 +2,7 @@ name: Kafka-to-AutoMQ-via-Zilla-Platform
 services:
   gateway:
     container_name: "gateway"
-    image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-develop-SNAPSHOT}
+    image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-latest}
     restart: unless-stopped
     hostname: gateway.env.data.plane.net
     configs:
