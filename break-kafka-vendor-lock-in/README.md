@@ -90,10 +90,22 @@ Build the mirror-maker image:
 docker compose build
 ```
 
-Start the environment and wait for all services to become ready:
+Start the environment and wait for all services(includes both AutoMQ & Redpanda) to become ready:
 
 ```bash
 docker compose up --wait
+```
+
+To start the environment with AutoMQ enabled:
+
+```bash
+docker compose --profile automq up --wait
+```
+
+To start the environment with Redpanda enabled:
+
+```bash
+docker compose --profile redpanda up --wait
 ```
 
 ## Step 4: Attach Kafka Services
