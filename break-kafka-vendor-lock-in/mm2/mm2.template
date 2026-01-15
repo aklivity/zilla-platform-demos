@@ -1,0 +1,20 @@
+clusters = A, B
+
+A.bootstrap.servers = ${SOURCE}
+B.bootstrap.servers = ${DESTINATION}
+
+A->B.enabled = true
+A->B.topics = ${TOPICS}
+
+replication.factor=1
+refresh.topics.enabled=true
+refresh.topics.interval.seconds=5
+replication.policy.class=org.apache.kafka.connect.mirror.IdentityReplicationPolicy
+sync.topic.acls.enabled = false
+
+offset.storage.replication.factor=1
+status.storage.replication.factor=1
+config.storage.replication.factor=1
+heartbeats.topic.replication.factor=1
+checkpoints.topic.replication.factor=1
+offset-syncs.topic.replication.factor=1
