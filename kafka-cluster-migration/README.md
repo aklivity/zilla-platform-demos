@@ -1,8 +1,8 @@
-# Kafka Vendor Flexibility with Zilla Platform
+# Kafka Migration with Zilla Platform
 
 This demo shows how to add flexibility to your Kafka architecture using Zilla Platform. 
 
-It demonstrates how teams can introduce other Kafka flavours such as Apache Kafka, AutoMQ, or Redpanda alongside existing deployments, without changing client code, security settings, or schemas.
+It demonstrates how teams can introduce other Kafka flavors such as Apache Kafka, AutoMQ, or Redpanda alongside existing deployments, without changing client code, security settings, or schemas.
 
 ## Migration Steps
 

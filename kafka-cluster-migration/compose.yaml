@@ -1,4 +1,4 @@
-name: multi-kafka-via-zilla-platform
+name: kafka-cluster-migration
 services:
   gateway:
     container_name: "gateway"
@@ -99,7 +99,7 @@ services:
       retries: 5
       test: [ "CMD", "bash", "-c", "echo -n '' > /dev/tcp/127.0.0.1/39092" ]
     volumes:
-      - redpanda:/var/lib/redpanda/data
+      - redpanda-data:/var/lib/redpanda/data
     networks:
       - data-plane
 
@@ -326,7 +326,7 @@ networks:
 volumes:
   gateway-data:
   gateway-tls:
-  redpanda:
+  redpanda-data:
 
 configs:
   zilla.yaml:
