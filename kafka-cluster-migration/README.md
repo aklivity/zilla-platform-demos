@@ -1,21 +1,19 @@
-# Kafka to AutoMQ via Zilla Platform
+# Kafka Migration with Zilla Platform
 
-This demo walks through a Kafka migration journey: moving from an existing Apache Kafka deployment to AutoMQ without changing client code, security configuration, or schemas.
+This demo shows how to add flexibility to your Kafka architecture using Zilla Platform. 
 
-The key idea is to separate data movement from application access, allowing migration to happen incrementally and with zero downtime.
+It demonstrates how teams can introduce other Kafka flavors such as Apache Kafka, AutoMQ, or Redpanda alongside existing deployments, without changing client code, security settings, or schemas.
 
 ## Migration Steps
 
-* Start with an existing **Apache Kafka** cluster serving traffic
-* Provision a target **AutoMQ** cluster
-* Configure **MirrorMaker** to replicate topics and data between clusters
-* Attach both Kafka clusters to the **Zilla Platform**
-* Extract **AsyncAPI** contracts from existing topics and schemas
-* Define a governed **Data Product** representing current event streams
-* Deploy the data product against the Apache Kafka service.
-* Create a new version of the data product (`1.0.0`) and deploy it against **AutoMQ**
-* Migrate producers to publish through the new data product version
-* Gradually shift consumer traffic to the AutoMQ-backed version
+* Start with **Apache Kafka** cluster
+* Add **AutoMQ** or **Redpanda** as an additional Kafka backend
+* Replicate data between clusters using **MirrorMaker**
+* Generate **AsyncAPI** contracts from existing topics
+* Create a governed **Data Product** for the event streams
+* **Deploy** the Data Product on Apache Kafka
+* **Redeploy** the same Data Product on AutoMQ or Redpanda
+* Move producers and consumers gradually, with **no downtime**
 
 ## Prerequisites
 
@@ -73,8 +71,9 @@ The **compose.yaml** is a ready-to-run sandbox that bundles:
 - A **Zilla Platform Gateway**
 - A **Kafka Cluster**
 - A **AutoMQ Cluster**
+- A **Redpanda Cluster**
 - A **Schema Registry**
-- **Mirrormaker** Service (**Kafka** → **AutoMQ**)
+- **Mirrormaker** Services (**Kafka** → **AutoMQ** & **Kafka** → **Redpanda**)
 
 Before starting the environment, export your license and bootstrap credentials:
 
@@ -83,10 +82,30 @@ export ZILLA_PLATFORM_LICENSE_KEY=<your-license-key>
 export ZILLA_PLATFORM_BOOTSTRAP_TOKEN=<your-bootstrap-token>
 ```
 
-Start the environment and wait for all services to become ready:
+Build the stack
+
+Build the mirror-maker image:
+
+```bash
+docker compose build
+```
+
+Start the environment and wait for all services(includes both AutoMQ & Redpanda) to become ready:
 
 ```bash
 docker compose up --wait
+```
+
+To start the environment with AutoMQ enabled:
+
+```bash
+docker compose --profile automq up --wait
+```
+
+To start the environment with Redpanda enabled:
+
+```bash
+docker compose --profile redpanda up --wait
 ```
 
 ## Step 4: Attach Kafka Services
@@ -111,6 +130,20 @@ Add another Kafka service with AutoMQ Cluster:
 
 ```
 automq.env.data.plane.net:9095
+```
+
+Schema Registry:
+
+```
+http://schema-registry.env.data.plane.net:8081
+```
+
+### Attach Redpanda Cluster
+
+Add another Kafka service with Redpanda Cluster:
+
+```
+redpanda.env.data.plane.net:9096
 ```
 
 Schema Registry:
@@ -145,12 +178,6 @@ Deploy the API Product to a server. Follow Guide [here](https://docs.aklivity.io
 
 Select `Kafka` as the target service.
 
-## Step 7: Deploy the API Product (AutoMQ)
-
-Create another version `1.0.0` of the Spec (`Workspaces → [Workspace Name] → [Project Name] → Spec → Update version → Save`).
-
-Under `API Catalog → [catalog] → [API product] → New Version` add newly created version and deploy the API Product.
-
 ## Step 8: Create Applications
 
 Create an application to obtain, Follow Guide [here](https://docs.aklivity.io/zilla-platform/latest/api/consume/apps/).:
@@ -158,35 +185,22 @@ Create an application to obtain, Follow Guide [here](https://docs.aklivity.io/zi
 - API Key
 - Secret Key
 
-* Select version `0.1.0` for Apache Kafka.
-* Select version `1.0.0` for AutoMQ.
+Export API Key, Secret Key:
 
-### Consume API Product
+```
+export ACCESS_KEY="<API_KEY>"
+export SECRET_KEY="<SECRET_KEY>"
+```
 
-Once your API Product is deployed, you can interact with it using a Kafka client to produce and consume events securely.
-
-Switching between Kafka and AutoMQ is controlled by the application you are consuming.
-
-### Kafka Client Properties
-
-You can find TLS & SASL information under:
-
-`APIs & Apps → Applications → [application] → Connection Guide → Credentials → Kafka Client Properties`
-
-This configuration enables secure TLS communication and authenticates the client using your API key and secret key.
+### Produce and Consume Events
 
 You can find Kafka Bootstrap server & Schema Registry URL under:
 
 `APIs & Apps → Applications → [application] → Connection Guide → Connection Endpoints`
 
-### Producing and Consuming Events
-
-Export API Key, Secret Key, Kafka bootstrap server & Schema Registry URL:
+Export Kafka bootstrap server & Schema Registry URL:
 
 ```
-export ACCESS_KEY="<API_KEY>"
-export SECRET_KEY="<SECRET_KEY>"
-
 export KAFKA_BOOTSTRAP_SERVER="<KAFKA_BOOTSTRAP_SERVER>"
 export SCHEMA_REGISTRY_URL="<SCHEMA_REGISTRY_URL>"
 ```
@@ -237,6 +251,29 @@ docker compose \
   --property basic.auth.credentials.source=USER_INFO \
   --property schema.registry.basic.auth.user.info="${ACCESS_KEY}:${SECRET_KEY}"
 ```
+
+## Step 9: Verify Replication
+
+Using Zilla Platform explore the topics on different Kafka services (AutoMQ/Redpanda) if the messages are replicated.
+
+`Environments → [Environment Name] → Services → [Service Name] → Topics → [orders-api-v0.orders.created] → Messages`
+
+## Step 10: Remove Apache Kafka Deployment
+
+Remove the Apache Kafka deployment:
+
+`API Catalog → [catalog] → [API product] → Deployments → Remove`
+
+## Step 11: Redeploy API Product on AutoMQ or Redpanda
+
+`API Catalog → [catalog] → [API product] → Deploy`
+
+Select `Target service` as AutoMQ or Redpanda, based on your preference.
+
+Your clients continue working without any changes:
+* Same bootstrap server
+* Same API key and secret
+* [Same produce/consume commands]((#producing-and-consuming-events))
 
 ## Stop the Stack
 
