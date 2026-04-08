@@ -3,6 +3,7 @@ services:
   gateway:
     container_name: "gateway"
     image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-latest}
+    pull_policy: always
     restart: unless-stopped
     hostname: gateway.env.data.plane.net
     configs:

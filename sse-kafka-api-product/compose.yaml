@@ -1,0 +1,547 @@
+name: quickstart-env
+services:
+  gateway:
+    image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    hostname: gateway.env.data.plane.net
+    configs:
+      - source: zilla.yaml
+        target: /etc/zilla/zilla.yaml
+        mode: 0666
+    volumes:
+      - gateway-data:/var/run/zilla
+      - gateway-tls:/etc/zilla/tls:ro
+      - bootstrap-data:/run/secrets/platform:ro
+      - ./tls:/etc/zilla/localhost:ro
+    ports:
+      - 4444:4444
+      - 7143:7143
+      - 9094:9094
+      - 8082:8082
+    environment:
+      JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:4444"
+      ZILLA_PLATFORM_LICENSE_KEY: ${ZILLA_PLATFORM_LICENSE_KEY}
+      ZILLA_PLATFORM_BOOTSTRAP_TOKEN_FILE: /run/secrets/platform/bootstrap-token
+    command: bootstrap -v -e -l -w 1 --platform http://zilla.platform.net:8081/ -Pzilla.binding.socks.debug=true
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      gateway-init:
+        condition: service_completed_successfully
+    networks:
+      bootstrap-plane:
+      data-plane:
+        aliases:
+          - orders-api-v0.staging.platform.net
+          - orders-api-v1.staging.platform.net
+          - orders-api-v2.staging.platform.net
+          - mtls-orders-api-v1.staging.platform.net
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '2'
+          memory: 1G
+
+  kafka:
+    image: bitnamilegacy/kafka:3.5
+    restart: unless-stopped
+    hostname: kafka.env.data.plane.net
+    expose:
+      - 9092
+    healthcheck:
+      test: /opt/bitnami/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka.env.data.plane.net:29092 || exit 1
+      interval: 1s
+      timeout: 60s
+      retries: 60
+    environment:
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_BROKER_ID: "1"
+      KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@127.0.0.1:9093"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LOG_DIRS: "/tmp/logs"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_LISTENERS: "CLIENT://:9092,INTERNAL://:29092,CONTROLLER://:9093"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,INTERNAL://kafka.env.data.plane.net:29092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
+      KAFKA_CFG_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_CFG_SUPER_USERS: "User:${KAFKA_SASL_USER:-admin};User:${KAFKA_PLAIN_BROKER_USER:-broker};User:ANONYMOUS"
+      KAFKA_CFG_SASL_ENABLED_MECHANISMS: "PLAIN,SCRAM-SHA-256,SCRAM-SHA-512"
+      KAFKA_CLIENT_LISTENER_NAME: "CLIENT"
+      KAFKA_CLIENT_USERS: "${KAFKA_SASL_USER:-admin},${KAFKA_PRODUCER_USER:-producer-app},${KAFKA_CONSUMER_USER:-consumer-app}"
+      KAFKA_CLIENT_PASSWORDS: "${KAFKA_SASL_PASSWORD:-admin-secret},${KAFKA_PRODUCER_PASSWORD:-producer-secret},${KAFKA_CONSUMER_PASSWORD:-consumer-secret}"
+      KAFKA_CFG_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_PLAIN_BROKER_USER:-broker}"
+        password="${KAFKA_PLAIN_BROKER_PASSWORD:-broker-secret}"
+        user_${KAFKA_SASL_USER:-admin}="${KAFKA_SASL_PASSWORD:-admin-secret}"
+        user_${KAFKA_PRODUCER_USER:-producer-app}="${KAFKA_PRODUCER_PASSWORD:-producer-secret}"
+        user_${KAFKA_CONSUMER_USER:-consumer-app}="${KAFKA_CONSUMER_PASSWORD:-consumer-secret}";
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - data-plane
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.1.0
+    restart: unless-stopped
+    hostname: schema-registry.env.data.plane.net
+    container_name: schema-registry
+    depends_on:
+      - kafka
+    expose:
+      - 8081
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry.env.data.plane.net
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka.env.data.plane.net:29092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: schema-registry
+      SCHEMA_REGISTRY_MASTER_ELIGIBILITY: "true"
+      SCHEMA_REGISTRY_COMPATIBILITY_LEVEL: FULL
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
+    networks:
+      - data-plane
+
+  kafka-init:
+    image: bitnamilegacy/kafka:3.5
+    hostname: kafka-init.env.data.plane.net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+    networks:
+      - data-plane
+    volumes:
+      - gateway-tls:/etc/tls:ro
+    environment:
+      ZILLA_PLATFORM_ACCESS_KEY: ${ZILLA_PLATFORM_ACCESS_KEY:-}
+      ZILLA_PLATFORM_SECRET_KEY: ${ZILLA_PLATFORM_SECRET_KEY:-}
+      ZILLA_PLATFORM_SERVER_VALUE: ${ZILLA_PLATFORM_SERVER_VALUE:-}
+      ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER: ${ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER:-}
+      ZILLA_PLATFORM_SCHEMA_REGISTRY_URL: ${ZILLA_PLATFORM_SCHEMA_REGISTRY_URL:-}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "Waiting for Kafka to be ready..."
+        sleep 5
+
+        echo "Creating topic: orders.created..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --create --if-not-exists \
+          --topic orders.created \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo "Waiting for Schema Registry to be ready..."
+        until curl -sf http://schema-registry.env.data.plane.net:8081/subjects > /dev/null 2>&1; do
+          echo "Waiting for schema registry..."
+          sleep 2
+        done
+
+        echo "Registering JSON schema for orders.created-value..."
+        curl -sS -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+          --data '{"schemaType":"JSON","schema":"{\"type\":\"object\",\"properties\":{\"orderId\":{\"type\":\"string\"},\"status\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"}},\"required\":[\"orderId\",\"status\",\"timestamp\"]}"}' \
+          http://schema-registry.env.data.plane.net:8081/subjects/orders.created-value/versions
+
+        echo "Creating topic: products.created (AVRO)..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --create --if-not-exists \
+          --topic products.created \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo "Registering AVRO schema for products.created-value..."
+        curl -sS -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+          --data '{"schemaType":"AVRO","schema":"{\"type\":\"record\",\"name\":\"Product\",\"namespace\":\"io.aklivity.zilla.platform.quickstart\",\"fields\":[{\"name\":\"productId\",\"type\":\"string\"},{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"price\",\"type\":\"double\"},{\"name\":\"timestamp\",\"type\":\"long\"}]}"}' \
+          http://schema-registry.env.data.plane.net:8081/subjects/products.created-value/versions
+
+        echo "Creating quotas for clients..."
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config producer_byte_rate=1048576 \
+          --entity-type clients \
+          --entity-name producer-app
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config consumer_byte_rate=2097152 \
+          --entity-type clients \
+          --entity-name consumer-app
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config producer_byte_rate=65536,consumer_byte_rate=65536 \
+          --entity-type clients \
+          --entity-default
+
+        echo "Seeding Kafka ACLs..."
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:admin" \
+          --operation ALL \
+          --cluster
+
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:producer-app" \
+          --operation WRITE \
+          --operation DESCRIBE \
+          --topic orders.created
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:producer-app" \
+          --operation WRITE \
+          --operation DESCRIBE \
+          --topic products.created
+
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:consumer-app" \
+          --operation READ \
+          --operation DESCRIBE \
+          --topic orders.created
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:consumer-app" \
+          --operation READ \
+          --operation DESCRIBE \
+          --topic products.created
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:consumer-app" \
+          --operation READ \
+          --group "*"
+
+        echo ""
+        echo "✓ Kafka initialization complete!"
+        echo "  Topic: orders.created (3 partitions, 1 replica) - JSON schema"
+        echo "  Topic: products.created (3 partitions, 1 replica) - AVRO schema"
+        echo "  Quota: producer-app (producer rate 1 MB/s)"
+        echo "  Quota: consumer-app (consumer rate 2 MB/s)"
+        echo "  Quota: default (producer rate 64 KB/s, consumer rate 64 KB/s)"
+        echo "  ACL: admin (cluster: ALL)"
+        echo "  ACL: producer-app (topics: orders.created, products.created; ops: WRITE, DESCRIBE)"
+        echo "  ACL: consumer-app (topics: orders.created, products.created; groups: *; ops: READ, DESCRIBE)"
+
+  kafka-tools:
+    image: confluentinc/cp-schema-registry:8.1.0
+    hostname: kafka-tools.env.data.plane.net
+    networks:
+      - data-plane
+    environment:
+      ZILLA_PLATFORM_ACCESS_KEY: ${ZILLA_PLATFORM_ACCESS_KEY:-}
+      ZILLA_PLATFORM_SECRET_KEY: ${ZILLA_PLATFORM_SECRET_KEY:-}
+      ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER: ${ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER:-}
+      ZILLA_PLATFORM_SCHEMA_REGISTRY_URL: ${ZILLA_PLATFORM_SCHEMA_REGISTRY_URL:-}
+    deploy:
+      replicas: 0
+    configs:
+      - source: orders.schema.json
+        target: /etc/schemas/orders.schema.json
+      - source: products.schema.avsc
+        target: /etc/schemas/products.schema.avsc
+    volumes:
+      - gateway-tls:/etc/tls:ro
+
+  gateway-init:
+    image: eclipse-temurin:17-jdk
+    volumes:
+      - gateway-tls:/etc/zilla/tls:rw
+    configs:
+      - source: tls.init.sh
+        target: /tmp/tls.init.sh
+        mode: 0555
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        exec /tmp/tls.init.sh
+    working_dir: /etc/zilla
+
+networks:
+  data-plane:
+  bootstrap-plane:
+    name: quickstart_bootstrap-plane
+    external: true
+
+volumes:
+  gateway-data:
+  gateway-tls:
+  bootstrap-data:
+    name: quickstart_bootstrap-data
+    external: true
+
+configs:
+  zilla.yaml:
+    content: |
+      name: "gateway"
+      vaults:
+        server:
+          type: "filesystem"
+          options:
+            keys:
+              store: "tls/server/keys"
+              password: "generated"
+        client:
+          type: "filesystem"
+          options:
+            trust:
+              store: "tls/client/trust"
+              type: "pkcs12"
+              password: "generated"
+        localhost_server:
+          type: "filesystem"
+          options:
+            keys:
+              store: "localhost/localhost.p12"
+              type: "pkcs12"
+              password: "generated"
+      guards:
+        authn_jwt:
+          type: jwt
+          options:
+            issuer: "https://auth.example.com"
+            audience: "https://api.example.com"
+            keys:
+              - kty: "RSA"
+                n: "qqEu50hX+43Bx4W1UYWnAVKwFm+vDbP0kuIOSLVNa+HKQdHTf+3Sei5UCnkskn796izA29D0DdCy3ET9oaKRHIJyKbqFl0rv6f516QzOoXKC6N01sXBHBE/ovs0wwDvlaW+gFGPgkzdcfUlyrWLDnLV7LcuQymhTND2uH0oR3wJnNENN/OFgM1KGPPDOe19YsIKdLqARgxrhZVsh06OurEviZTXOBFI5r+yac7haDwOQhLHXNv+Y9MNvxs5QLWPFIM3bNUWfYrJnLrs4hGJS+y/KDM9Si+HL30QAFXy4YNO33J8DHjZ7ddG5n8/FqplOKvRtUgjcKWlxoGY4VdVaDQ=="
+                e: "AQAB"
+                alg: "RS256"
+                kid: "example"
+              - kty: "EC"
+                crv: "P-256"
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU"
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+                alg: "ES256"
+                kid: "example_ec"
+            challenge: 10
+      bindings:
+        tcp_server:
+          type: tcp
+          kind: server
+          options:
+            host: 0.0.0.0
+            port:
+              - 7143
+          routes:
+            - when:
+                - port: 7143
+              exit: tls_server
+        tls_server:
+          type: tls
+          kind: server
+          vault: localhost_server
+          options:
+            keys:
+              - localhost
+            sni:
+              - localhost
+            alpn:
+              - h2
+          exit: http_server
+        http_server:
+          type: http
+          kind: server
+          options:
+            versions:
+              - h2
+            authorization:
+              authn_jwt:
+                credentials:
+                  headers:
+                    authorization: Bearer {credentials}
+                  query:
+                    access_token: "{credentials}"
+            access-control:
+              policy: cross-origin
+          routes:
+            - when:
+                - headers:
+                    :method: GET
+              exit: sse_server
+            - guarded:
+                authn_jwt:
+                  - proxy:publish
+              when:
+                - headers:
+                    :method: POST
+              exit: http_kafka_mapping
+        sse_server:
+          type: sse
+          kind: server
+          routes:
+            - guarded:
+                authn_jwt:
+                  - proxy:stream
+              exit: sse_kafka_mapping
+        sse_kafka_mapping:
+          type: sse-kafka
+          kind: proxy
+          routes:
+            - when:
+                - path: /orders.created
+              exit: kafka_cache_client
+              with:
+                topic: orders.created
+        http_kafka_mapping:
+          type: http-kafka
+          kind: proxy
+          routes:
+            - when:
+                - method: POST
+                  path: /orders.created
+              exit: kafka_cache_client
+              with:
+                capability: produce
+                topic: orders.created
+        kafka_cache_client:
+          type: kafka
+          kind: cache_client
+          exit: kafka_cache_server
+        kafka_cache_server:
+          type: kafka
+          kind: cache_server
+          options:
+            bootstrap:
+              - orders.created
+          exit: kafka_client
+        kafka_client:
+          type: kafka
+          kind: client
+          options:
+            servers:
+              - kafka.env.data.plane.net:9092
+            sasl:
+              mechanism: "scram-sha-512"
+              username: "admin"
+              password: "admin-secret"
+          exit: south_tcp_client
+        south_tcp_client:
+          type: tcp
+          kind: client
+
+  tls.init.sh:
+    content: |
+      #!/bin/bash
+      set -ex
+
+      SERVER_CA_ALIAS=serverca
+      SERVER_CA_PASS=generated
+      SERVER_CERT_ALIAS=staging.platform.net
+      SERVER_CERT_PASS=generated
+      SERVER_KEY_PASS=generated
+      SERVER_CERT_SAN=dns:*.staging.platform.net
+      CLIENT_TRUST_PASS=generated
+
+      # tls/* config
+      mkdir -p tls/server tls/client
+      
+      if [ ! -f tls/server/signers ]; then
+        echo 'Generating Certificate Authority...'
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" -keypass "$$SERVER_CA_PASS" \
+          -genkeypair \
+          -alias "$$SERVER_CA_ALIAS" \
+          -dname "C=US, ST=California, O=Aklivity, OU=Development, CN=$$SERVER_CA_ALIAS" \
+          -validity 3650 \
+          -keyalg RSA \
+          -ext bc:c
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" \
+          -exportcert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -rfc > tls/server/$$SERVER_CA_ALIAS.crt
+      fi
+      
+      if [ ! -f tls/server/keys ]; then
+        echo 'Generating server keypair and CSR...'
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -genkeypair \
+          -alias "$$SERVER_CERT_ALIAS" -dname "C=US, ST=California, O=Aklivity, OU=Development, CN=$$SERVER_CERT_ALIAS" \
+          -validity 3650 \
+          -keyalg RSA
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -alias "$$SERVER_CERT_ALIAS" \
+          -certreq \
+          -rfc > tls/server/$$SERVER_CERT_ALIAS.csr
+      fi
+      
+      if [ ! -f tls/server/$$SERVER_CERT_ALIAS.crt ]; then
+        echo 'Signing server certificate...'
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" -keypass "$$SERVER_CA_PASS" \
+          -gencert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -ext ku:c=dig,keyenc \
+          -ext SAN="$$SERVER_CERT_SAN" \
+          -validity 1800 \
+          -rfc < tls/server/$$SERVER_CERT_ALIAS.csr > tls/server/$$SERVER_CERT_ALIAS.crt
+      
+        echo 'Importing certificate chain...'
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -importcert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -rfc -noprompt < tls/server/$$SERVER_CA_ALIAS.crt
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -importcert \
+          -alias "$$SERVER_CERT_ALIAS" \
+          -rfc < tls/server/$$SERVER_CERT_ALIAS.crt
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -delete \
+          -alias "$$SERVER_CA_ALIAS" \
+          -noprompt
+      fi
+      
+      if [ ! -f tls/client/trust ]; then
+        echo 'Creating client truststore...'
+        keytool -keystore tls/client/trust -storepass "$$CLIENT_TRUST_PASS" -keypass "$$CLIENT_TRUST_PASS" \
+          -importcert \
+          -alias "$$SERVER_CA_ALIAS" \
+          -rfc \
+          -noprompt < tls/server/$$SERVER_CA_ALIAS.crt
+      fi
+      
+      if [ ! -f tls/client/trust.jks ]; then
+        echo 'Converting truststore to JKS format...'
+        keytool -importkeystore \
+          -srckeystore tls/client/trust -srcstoretype PKCS12 -srcstorepass "$$CLIENT_TRUST_PASS" \
+          -destkeystore tls/client/trust.jks -deststoretype JKS -deststorepass "$$CLIENT_TRUST_PASS"
+      fi
+
+      if [ ! -f tls/tls.key ]; then
+        echo 'Exporting PEM private key...'
+        openssl pkcs12 -in tls/server/keys -passin pass:"$$SERVER_KEY_PASS" \
+          -nodes -nocerts -out tls/tls.key
+      fi
+
+      if [ ! -f tls/tls.crt ]; then
+        echo 'Exporting PEM certificate...'
+        openssl pkcs12 -in tls/server/keys -passin pass:"$$SERVER_CERT_PASS" \
+          -nokeys -out tls/tls.crt
+      fi
+
+  orders.schema.json:
+    content: |
+      {"type":"object","properties":{"orderId":{"type":"string"},"status":{"type":"string"},"timestamp":{"type":"integer"}},"required":["orderId","status","timestamp"]}
+
+  products.schema.avsc:
+    content: |
+      {"type":"record","name":"Product","namespace":"io.aklivity.zilla.platform.quickstart","fields":[{"name":"productId","type":"string"},{"name":"name","type":"string"},{"name":"price","type":"double"},{"name":"timestamp","type":"long"}]}
