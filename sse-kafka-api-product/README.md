@@ -1,3 +1,33 @@
+# HTTP/SSE to Kafka via Zilla Platform
+
+This demo shows how [Zilla Platform](https://www.aklivity.io/) exposes a Kafka topic as a secure HTTP/SSE API, no custom backend code required.
+
+**Use case:** A client POSTs an order event over HTTPS. Zilla routes it directly to a Kafka topic. Any subscriber listening on the same endpoint via Server-Sent Events receives the event in real time. JWT-based authorization controls who can publish vs. stream.
+
+**What's running:**
+
+| Component              | Role                                             |
+|------------------------|--------------------------------------------------|
+| Zilla Gateway          | Terminates TLS, validates JWTs, maps HTTP↔Kafka  |
+| Kafka (KRaft)          | Event store: `orders.created` topic              |
+| Zilla Platform Console | Manage and observe the Gateway and Kafka cluster |
+
+**Endpoints exposed by Zilla:**
+
+| Method      | Path              | Scope required  | Action                     |
+|-------------|-------------------|-----------------|----------------------------|
+| `POST`      | `/orders.created` | `proxy:publish` | Publish a message to Kafka |
+| `GET` (SSE) | `/orders.created` | `proxy:stream`  | Stream messages from Kafka |
+
+---
+
+## Prerequisites
+
+* **Docker Engine** `24.0+`
+* **Docker Compose** plugin `2.34.0+`
+* At least **4 vCPUs** and **4 GB RAM**
+* A valid **Zilla Platform License**
+* jwt-cli
 
 ## Get a License
 
@@ -13,6 +43,14 @@ If the license is missing or invalid, you'll see:
 License is invalid, contact support@aklivity.io to request a new license
 ```
 
+## Install jwt-cli client
+
+Generates JWT tokens from the command line.
+
+```bash
+brew install mike-engel/jwt-cli/jwt-cli
+```
+
 ## Start the Zilla Platform
 
 Pull and start the full platform stack — management console, control plane, Gateway, Kafka, and Schema Registry:
@@ -24,13 +62,11 @@ docker compose up --wait
 
 Once ready, open the [**Zilla Platform Management Console**](http://localhost:8081/) in your browser.
 
-> **Note:** The Quickstart Environment is pre-created. The Gateway auto-registers via `ZILLA_PLATFORM_BOOTSTRAP_TOKEN`, giving you a TLS-enabled Gateway with auto-generated certificates.
-
 ## Admin Setup
 
 The first time you open the console, complete the one-time admin registration to create your organization and initial environment.
 
-See the [Admin Onboarding guide](/platform/getting-started/admin-onboarding/README.md) for step-by-step details.
+See the [Admin Onboarding guide](https://docs.aklivity.io/zilla-platform/latest/platform/getting-started/admin-onboarding/) for step-by-step details.
 
 ## Publish an Event to Kafka
 
@@ -48,7 +84,7 @@ export JWT_TOKEN=$(jwt encode \
   --payload "scope=proxy:publish" \
   --secret @private.pem)
 
-curl -k -v -X POST \
+curl -v -X POST \
   --cacert test-ca.crt \
   https://localhost:7143/orders.created \
   -H "Authorization: Bearer $JWT_TOKEN" \
@@ -78,6 +114,29 @@ curl -v -N \
   -H "Accept: text/event-stream" \
   "https://localhost:7143/orders.created?access_token=${JWT_TOKEN}"
 ```
+
+### Output
+
+```text
+...
+> Accept: text/event-stream
+>
+...
+< HTTP/2 200
+< content-type: text/event-stream
+< access-control-allow-origin: *
+<
+id:AQYAAgIDBAM=
+data:{"orderId":"test-123","status":"created","timestamp":1234567890000}
+```
+
+## Explore Kafka Topics in the Zilla Platform Console
+
+Zilla Platform provides built-in visibility into your Kafka cluster directly from the management console, no separate tooling needed. Browse topics, inspect messages, and verify event flow in real time.
+
+Navigate to: **Environments → `QuickStart Environment` → Services → `QuickStart Kafka` → Topics → `orders.created` → Messages**
+
+![](./explore.png)
 
 ## Stop the stack
 
