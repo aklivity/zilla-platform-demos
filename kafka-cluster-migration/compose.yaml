@@ -294,8 +294,12 @@ services:
     image: 'mirror-maker:develop-SNAPSHOT'
     profiles: [confluent]
     depends_on:
-      - kafka
-      - confluent
+      confluent-init:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      confluent:
+        condition: service_healthy
     environment:
       - SOURCE=confluent.env.data.plane.net:49092
       - DESTINATION=kafka.env.data.plane.net:19092
@@ -369,6 +373,34 @@ services:
         echo "✓ Kafka initialization complete!"
         echo "  Topic: orders.created (3 partitions, 1 replica)"
         echo "  Schema: orders.created-value registered"
+
+  confluent-init:
+    image: confluentinc/cp-kafka:8.2.0
+    container_name: "confluent-init"
+    hostname: confluent-init.env.data.plane.net
+    profiles: [confluent]
+    depends_on:
+      confluent:
+        condition: service_healthy
+    networks:
+      - data-plane
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        set -e
+        echo "Creating topic: orders.created..."
+        kafka-topics \
+          --bootstrap-server confluent.env.data.plane.net:49092 \
+          --create --if-not-exists \
+          --topic orders.created \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo ""
+        echo "✓ Confluent initialization complete!"
+        echo "  Topic: orders.created (3 partitions, 1 replica)"
 
   gateway-init:
     container_name: "gateway-init"

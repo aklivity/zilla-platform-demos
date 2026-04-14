@@ -105,7 +105,7 @@ automq.env.data.plane.net:9095
    2. Select workspace, project, spec, and configure server settings:
 
        ```
-       Kafka Bootstrap Server: {server}.staging.platform.net:9094
+       staging.platform.net:9094
        ```
 
 ## Step 6: Deploy the API Product (Apache Kafka)
@@ -141,7 +141,6 @@ Use the following commands to produce and consume events from your API Product.
 ```
 echo '{"orderId":"test-123","status":"created","timestamp":1234567890000}' | \
 docker compose \
-  -f oci://ghcr.io/aklivity/zilla-platform/quickstart/env \
   run --rm kafka-init \
   '/opt/bitnami/kafka/bin/kafka-console-producer.sh \
       --bootstrap-server orders-api-v0.staging.platform.net:9094 \
@@ -157,7 +156,6 @@ docker compose \
 
 ```
 docker compose \
-  -f oci://ghcr.io/aklivity/zilla-platform/quickstart/env \
   run --rm kafka-init \
   '/opt/bitnami/kafka/bin/kafka-console-consumer.sh \
       --bootstrap-server orders-api-v0.staging.platform.net:9094 \
