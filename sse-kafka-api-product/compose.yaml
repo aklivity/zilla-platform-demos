@@ -1,7 +1,6 @@
-name: kafka-cluster-migration
+name: quickstart-env
 services:
   gateway:
-    container_name: "gateway"
     image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-latest}
     pull_policy: always
     restart: unless-stopped
@@ -14,12 +13,18 @@ services:
       - gateway-data:/var/run/zilla
       - gateway-tls:/etc/zilla/tls:ro
       - bootstrap-data:/run/secrets/platform:ro
+      - ./tls:/etc/zilla/localhost:ro
     ports:
+      - 4444:4444
+      - 7143:7143
       - 9094:9094
       - 8082:8082
     environment:
+      JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:4444"
       ZILLA_PLATFORM_LICENSE_KEY: ${ZILLA_PLATFORM_LICENSE_KEY}
       ZILLA_PLATFORM_BOOTSTRAP_TOKEN_FILE: /run/secrets/platform/bootstrap-token
+      KAFKA_SASL_USERNAME: "admin"
+      KAFKA_SASL_PASSWORD: "admin-secret"
     command: bootstrap -v -e -l -w 1 --platform http://zilla.platform.net:8081/ -Pzilla.binding.socks.debug=true
     depends_on:
       kafka-init:
@@ -33,6 +38,7 @@ services:
           - orders-api-v0.staging.platform.net
           - orders-api-v1.staging.platform.net
           - orders-api-v2.staging.platform.net
+          - mtls-orders-api-v1.staging.platform.net
     deploy:
       resources:
         limits:
@@ -48,7 +54,6 @@ services:
     hostname: kafka.env.data.plane.net
     expose:
       - 9092
-      - 19092
     healthcheck:
       test: /opt/bitnami/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka.env.data.plane.net:29092 || exit 1
       interval: 1s
@@ -63,10 +68,10 @@ services:
       KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_CFG_LOG_DIRS: "/tmp/logs"
       KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_LISTENERS: "CLIENT://:9092,CLIENT_PLAIN://:19092,INTERNAL://:29092,CONTROLLER://:9093"
+      KAFKA_CFG_LISTENERS: "CLIENT://:9092,INTERNAL://:29092,CONTROLLER://:9093"
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,CLIENT_PLAIN://kafka.env.data.plane.net:19092,INTERNAL://kafka.env.data.plane.net:29092"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,CLIENT_PLAIN:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,INTERNAL://kafka.env.data.plane.net:29092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CFG_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
       KAFKA_CFG_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
       KAFKA_CFG_SUPER_USERS: "User:${KAFKA_SASL_USER:-admin};User:${KAFKA_PLAIN_BROKER_USER:-broker};User:ANONYMOUS"
@@ -85,149 +90,6 @@ services:
     networks:
       - data-plane
 
-  redpanda:
-    image: redpandadata/redpanda:v25.3.4
-    container_name: redpanda
-    profiles: [redpanda]
-    hostname: redpanda.env.data.plane.net
-    command:
-      - redpanda
-      - start
-      - '--smp'
-      - '1'
-      - '--reserve-memory'
-      - 0M
-      - '--overprovisioned'
-      - '--node-id'
-      - '0'
-      - '--kafka-addr'
-      - 'INSIDE://0.0.0.0:39092,OUTSIDE://0.0.0.0:9096'
-      - '--advertise-kafka-addr'
-      - 'INSIDE://redpanda.env.data.plane.net:39092,OUTSIDE://redpanda.env.data.plane.net:9096'
-    ports:
-      - '39092:39092'
-      - '9096:9096'
-    expose:
-      - 9096
-    healthcheck:
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      test: [ "CMD", "bash", "-c", "echo -n '' > /dev/tcp/127.0.0.1/39092" ]
-    volumes:
-      - redpanda-data:/var/lib/redpanda/data
-    networks:
-      - data-plane
-
-  minio:
-    container_name: "minio"
-    image: minio/minio:RELEASE.2025-05-24T17-08-30Z
-    profiles: [automq]
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-      MINIO_DOMAIN: minio
-    ports:
-      - "9000:9000"  # MinIO API
-      - "9001:9001"  # MinIO Console
-    command: [ "server", "/data", "--console-address", ":9001" ]
-    networks:
-      - data-plane
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://minio:9000/minio/health/live" ]
-      interval: 5s
-      timeout: 5s
-      retries: 3
-
-  mc:
-    container_name: "mc"
-    image: minio/mc:RELEASE.2025-05-21T01-59-54Z
-    profiles: [automq]
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      until (/usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done;
-      /usr/bin/mc rm -r --force minio/automq-data;
-      /usr/bin/mc rm -r --force minio/automq-ops;
-      /usr/bin/mc mb minio/automq-data;
-      /usr/bin/mc mb minio/automq-ops;
-      /usr/bin/mc anonymous set public minio/automq-data;
-      /usr/bin/mc anonymous set public minio/automq-ops;
-      tail -f /dev/null
-      "
-    networks:
-      - data-plane
-
-  automq:
-    container_name: "automq"
-    image: automqinc/automq:1.5.5
-    profiles: [automq]
-    hostname: automq.env.data.plane.net
-    expose:
-      - 9095
-    stop_grace_period: 1m
-    environment:
-      KAFKA_S3_ACCESS_KEY: minioadmin
-      KAFKA_S3_SECRET_KEY: minioadmin
-      KAFKA_HEAP_OPTS: -Xms1g -Xmx4g -XX:MetaspaceSize=96m -XX:MaxDirectMemorySize=1G
-      CLUSTER_ID: 5XF4fHIOTfSIqkmje2KFlg
-    command:
-      - bash
-      - -c
-      - |
-        /opt/automq/kafka/bin/kafka-server-start.sh \
-        /opt/automq/kafka/config/kraft/server.properties \
-        --override cluster.id=$$CLUSTER_ID \
-        --override node.id=0 \
-        --override controller.quorum.voters=0@automq.env.data.plane.net:9093 \
-        --override controller.quorum.bootstrap.servers=automq.env.data.plane.net:9093 \
-        --override listeners=PLAINTEXT://:9095,CONTROLLER://:9093 \
-        --override advertised.listeners=PLAINTEXT://automq.env.data.plane.net:9095 \
-        --override s3.data.buckets='0@s3://automq-data?region=us-east-1&endpoint=http://minio:9000&pathStyle=true' \
-        --override s3.ops.buckets='1@s3://automq-ops?region=us-east-1&endpoint=http://minio:9000&pathStyle=true' \
-        --override s3.wal.path='0@s3://automq-data?region=us-east-1&endpoint=http://minio:9000&pathStyle=true'
-    networks:
-      - data-plane
-    depends_on:
-      - minio
-      - mc
-
-  confluent:
-    image: confluentinc/cp-kafka:8.2.0
-    container_name: confluent
-    profiles: [confluent]
-    hostname: confluent.env.data.plane.net
-    expose:
-      - 49092
-    ports:
-      - '9097:9097'
-    healthcheck:
-      test: [ "CMD-SHELL", "kafka-broker-api-versions --bootstrap-server confluent.env.data.plane.net:49092 > /dev/null 2>&1" ]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://confluent.env.data.plane.net:49092,PLAINTEXT_HOST://localhost:9097
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:49092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9097
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@confluent.env.data.plane.net:9093
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
-    volumes:
-      - confluent-data:/var/lib/kafka/data
-    networks:
-      - data-plane
-
   schema-registry:
     image: confluentinc/cp-schema-registry:8.1.0
     restart: unless-stopped
@@ -240,13 +102,7 @@ services:
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry.env.data.plane.net
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: SASL_PLAINTEXT://kafka.env.data.plane.net:9092
-      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: SASL_PLAINTEXT
-      SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM: PLAIN
-      SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG: >-
-        org.apache.kafka.common.security.plain.PlainLoginModule required
-        username="${KAFKA_SASL_USER:-admin}"
-        password="${KAFKA_SASL_PASSWORD:-admin-secret}";
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka.env.data.plane.net:29092
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
       SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: schema-registry
       SCHEMA_REGISTRY_MASTER_ELIGIBILITY: "true"
@@ -254,68 +110,6 @@ services:
       SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
     networks:
       - data-plane
-
-  mirrormaker-automq:
-    container_name: "mirrormaker-automq"
-    image: 'wpietri/mirror-maker:2'
-    profiles: [automq]
-    depends_on:
-      - kafka
-      - automq
-    environment:
-      - SOURCE=kafka.env.data.plane.net:9092
-      - DESTINATION=automq.env.data.plane.net:9095
-      - TOPICS=.*
-    networks:
-      - data-plane
-
-  mirrormaker-redpanda:
-    build:
-      context: ./mm2
-    container_name: "mirrormaker-redpanda"
-    image: 'mirror-maker:develop-SNAPSHOT'
-    profiles: [redpanda]
-    depends_on:
-      - kafka
-      - redpanda
-    environment:
-      - SOURCE=kafka.env.data.plane.net:9092
-      - DESTINATION=redpanda.env.data.plane.net:9096
-      - TOPICS=.*
-    networks:
-      - data-plane
-
-  mirrormaker-confluent:
-    container_name: "mirrormaker-confluent"
-    build:
-      context: ./mm2
-    image: 'mirror-maker:develop-SNAPSHOT'
-    profiles: [confluent]
-    depends_on:
-      - kafka
-      - confluent
-    environment:
-      - SOURCE=confluent.env.data.plane.net:49092
-      - DESTINATION=kafka.env.data.plane.net:19092
-      - TOPICS=orders.created
-    networks:
-      - data-plane
-
-  kafka-tools:
-    image: confluentinc/cp-schema-registry:8.1.0
-    hostname: kafka-tools.env.data.plane.net
-    networks:
-      - data-plane
-    environment:
-      ACCESS_KEY: ${ACCESS_KEY:-}
-      SECRET_KEY: ${SECRET_KEY:-}
-    deploy:
-      replicas: 0
-    configs:
-      - source: orders.schema.json
-        target: /etc/schemas/orders.schema.json
-    volumes:
-      - gateway-tls:/etc/tls:ro
 
   kafka-init:
     image: bitnamilegacy/kafka:3.5
@@ -335,7 +129,7 @@ services:
       ZILLA_PLATFORM_SERVER_VALUE: ${ZILLA_PLATFORM_SERVER_VALUE:-}
       ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER: ${ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER:-}
       ZILLA_PLATFORM_SCHEMA_REGISTRY_URL: ${ZILLA_PLATFORM_SCHEMA_REGISTRY_URL:-}
-    entrypoint: [ "/bin/bash", "-c" ]
+    entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         set -e
@@ -363,13 +157,117 @@ services:
           --data '{"schemaType":"JSON","schema":"{\"type\":\"object\",\"properties\":{\"orderId\":{\"type\":\"string\"},\"status\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"}},\"required\":[\"orderId\",\"status\",\"timestamp\"]}"}' \
           http://schema-registry.env.data.plane.net:8081/subjects/orders.created-value/versions
 
+        echo "Creating topic: products.created (AVRO)..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --create --if-not-exists \
+          --topic products.created \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo "Registering AVRO schema for products.created-value..."
+        curl -sS -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+          --data '{"schemaType":"AVRO","schema":"{\"type\":\"record\",\"name\":\"Product\",\"namespace\":\"io.aklivity.zilla.platform.quickstart\",\"fields\":[{\"name\":\"productId\",\"type\":\"string\"},{\"name\":\"name\",\"type\":\"string\"},{\"name\":\"price\",\"type\":\"double\"},{\"name\":\"timestamp\",\"type\":\"long\"}]}"}' \
+          http://schema-registry.env.data.plane.net:8081/subjects/products.created-value/versions
+
+        echo "Creating quotas for clients..."
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config producer_byte_rate=1048576 \
+          --entity-type clients \
+          --entity-name producer-app
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config consumer_byte_rate=2097152 \
+          --entity-type clients \
+          --entity-name consumer-app
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config producer_byte_rate=65536,consumer_byte_rate=65536 \
+          --entity-type clients \
+          --entity-default
+
+        echo "Seeding Kafka ACLs..."
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:admin" \
+          --operation ALL \
+          --cluster
+
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:producer-app" \
+          --operation WRITE \
+          --operation DESCRIBE \
+          --topic orders.created
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:producer-app" \
+          --operation WRITE \
+          --operation DESCRIBE \
+          --topic products.created
+
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:consumer-app" \
+          --operation READ \
+          --operation DESCRIBE \
+          --topic orders.created
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:consumer-app" \
+          --operation READ \
+          --operation DESCRIBE \
+          --topic products.created
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add \
+          --allow-principal "User:consumer-app" \
+          --operation READ \
+          --group "*"
+
         echo ""
         echo "✓ Kafka initialization complete!"
-        echo "  Topic: orders.created (3 partitions, 1 replica)"
-        echo "  Schema: orders.created-value registered"
+        echo "  Topic: orders.created (3 partitions, 1 replica) - JSON schema"
+        echo "  Topic: products.created (3 partitions, 1 replica) - AVRO schema"
+        echo "  Quota: producer-app (producer rate 1 MB/s)"
+        echo "  Quota: consumer-app (consumer rate 2 MB/s)"
+        echo "  Quota: default (producer rate 64 KB/s, consumer rate 64 KB/s)"
+        echo "  ACL: admin (cluster: ALL)"
+        echo "  ACL: producer-app (topics: orders.created, products.created; ops: WRITE, DESCRIBE)"
+        echo "  ACL: consumer-app (topics: orders.created, products.created; groups: *; ops: READ, DESCRIBE)"
+
+  kafka-tools:
+    image: confluentinc/cp-schema-registry:8.1.0
+    hostname: kafka-tools.env.data.plane.net
+    networks:
+      - data-plane
+    environment:
+      ZILLA_PLATFORM_ACCESS_KEY: ${ZILLA_PLATFORM_ACCESS_KEY:-}
+      ZILLA_PLATFORM_SECRET_KEY: ${ZILLA_PLATFORM_SECRET_KEY:-}
+      ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER: ${ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER:-}
+      ZILLA_PLATFORM_SCHEMA_REGISTRY_URL: ${ZILLA_PLATFORM_SCHEMA_REGISTRY_URL:-}
+    deploy:
+      replicas: 0
+    configs:
+      - source: orders.schema.json
+        target: /etc/schemas/orders.schema.json
+      - source: products.schema.avsc
+        target: /etc/schemas/products.schema.avsc
+    volumes:
+      - gateway-tls:/etc/tls:ro
 
   gateway-init:
-    container_name: "gateway-init"
     image: eclipse-temurin:17-jdk
     volumes:
       - gateway-tls:/etc/zilla/tls:rw
@@ -386,13 +284,6 @@ services:
 
 networks:
   data-plane:
-    name: data-plane
-    driver: bridge
-    ipam:
-      driver: default
-      config:
-        - subnet: "10.6.0.0/16"
-          gateway: "10.6.0.1"
   bootstrap-plane:
     name: quickstart_bootstrap-plane
     external: true
@@ -400,8 +291,6 @@ networks:
 volumes:
   gateway-data:
   gateway-tls:
-  redpanda-data:
-  confluent-data:
   bootstrap-data:
     name: quickstart_bootstrap-data
     external: true
@@ -424,6 +313,136 @@ configs:
               store: "tls/client/trust"
               type: "pkcs12"
               password: "generated"
+        localhost_server:
+          type: "filesystem"
+          options:
+            keys:
+              store: "localhost/localhost.p12"
+              type: "pkcs12"
+              password: "generated"
+      guards:
+        authn_jwt:
+          type: jwt
+          options:
+            issuer: "https://auth.example.com"
+            audience: "https://api.example.com"
+            keys:
+              - kty: "RSA"
+                n: "qqEu50hX+43Bx4W1UYWnAVKwFm+vDbP0kuIOSLVNa+HKQdHTf+3Sei5UCnkskn796izA29D0DdCy3ET9oaKRHIJyKbqFl0rv6f516QzOoXKC6N01sXBHBE/ovs0wwDvlaW+gFGPgkzdcfUlyrWLDnLV7LcuQymhTND2uH0oR3wJnNENN/OFgM1KGPPDOe19YsIKdLqARgxrhZVsh06OurEviZTXOBFI5r+yac7haDwOQhLHXNv+Y9MNvxs5QLWPFIM3bNUWfYrJnLrs4hGJS+y/KDM9Si+HL30QAFXy4YNO33J8DHjZ7ddG5n8/FqplOKvRtUgjcKWlxoGY4VdVaDQ=="
+                e: "AQAB"
+                alg: "RS256"
+                kid: "example"
+              - kty: "EC"
+                crv: "P-256"
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU"
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+                alg: "ES256"
+                kid: "example_ec"
+            challenge: 10
+      bindings:
+        tcp_server:
+          type: tcp
+          kind: server
+          options:
+            host: 0.0.0.0
+            port:
+              - 7143
+          routes:
+            - when:
+                - port: 7143
+              exit: tls_server
+        tls_server:
+          type: tls
+          kind: server
+          vault: localhost_server
+          options:
+            keys:
+              - localhost
+            sni:
+              - localhost
+            alpn:
+              - h2
+          exit: http_server
+        http_server:
+          type: http
+          kind: server
+          options:
+            versions:
+              - h2
+            authorization:
+              authn_jwt:
+                credentials:
+                  headers:
+                    authorization: Bearer {credentials}
+                  query:
+                    access_token: "{credentials}"
+            access-control:
+              policy: cross-origin
+          routes:
+            - when:
+                - headers:
+                    :method: GET
+              exit: sse_server
+            - guarded:
+                authn_jwt:
+                  - proxy:publish
+              when:
+                - headers:
+                    :method: POST
+              exit: http_kafka_mapping
+        sse_server:
+          type: sse
+          kind: server
+          routes:
+            - guarded:
+                authn_jwt:
+                  - proxy:stream
+              exit: sse_kafka_mapping
+        sse_kafka_mapping:
+          type: sse-kafka
+          kind: proxy
+          routes:
+            - when:
+                - path: /orders.created
+              exit: kafka_cache_client
+              with:
+                topic: orders.created
+        http_kafka_mapping:
+          type: http-kafka
+          kind: proxy
+          routes:
+            - when:
+                - method: POST
+                  path: /orders.created
+              exit: kafka_cache_client
+              with:
+                capability: produce
+                topic: orders.created
+        kafka_cache_client:
+          type: kafka
+          kind: cache_client
+          exit: kafka_cache_server
+        kafka_cache_server:
+          type: kafka
+          kind: cache_server
+          options:
+            bootstrap:
+              - orders.created
+          exit: kafka_client
+        kafka_client:
+          type: kafka
+          kind: client
+          options:
+            servers:
+              - kafka.env.data.plane.net:9092
+            sasl:
+              mechanism: "scram-sha-512"
+              username: "$${{env.KAFKA_SASL_USERNAME}}"
+              password: "$${{env.KAFKA_SASL_PASSWORD}}"
+          exit: south_tcp_client
+        south_tcp_client:
+          type: tcp
+          kind: client
 
   tls.init.sh:
     content: |
@@ -434,6 +453,7 @@ configs:
       SERVER_CA_PASS=generated
       SERVER_CERT_ALIAS=staging.platform.net
       SERVER_CERT_PASS=generated
+      SERVER_KEY_PASS=generated
       SERVER_CERT_SAN=dns:*.staging.platform.net
       CLIENT_TRUST_PASS=generated
 
@@ -508,6 +528,22 @@ configs:
           -destkeystore tls/client/trust.jks -deststoretype JKS -deststorepass "$$CLIENT_TRUST_PASS"
       fi
 
+      if [ ! -f tls/tls.key ]; then
+        echo 'Exporting PEM private key...'
+        openssl pkcs12 -in tls/server/keys -passin pass:"$$SERVER_KEY_PASS" \
+          -nodes -nocerts -out tls/tls.key
+      fi
+
+      if [ ! -f tls/tls.crt ]; then
+        echo 'Exporting PEM certificate...'
+        openssl pkcs12 -in tls/server/keys -passin pass:"$$SERVER_CERT_PASS" \
+          -nokeys -out tls/tls.crt
+      fi
+
   orders.schema.json:
     content: |
       {"type":"object","properties":{"orderId":{"type":"string"},"status":{"type":"string"},"timestamp":{"type":"integer"}},"required":["orderId","status","timestamp"]}
+
+  products.schema.avsc:
+    content: |
+      {"type":"record","name":"Product","namespace":"io.aklivity.zilla.platform.quickstart","fields":[{"name":"productId","type":"string"},{"name":"name","type":"string"},{"name":"price","type":"double"},{"name":"timestamp","type":"long"}]}
