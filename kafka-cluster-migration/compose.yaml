@@ -257,15 +257,17 @@ services:
 
   mirrormaker-automq:
     container_name: "mirrormaker-automq"
-    image: 'wpietri/mirror-maker:2'
+    build:
+      context: ./mm2
+    image: 'mirror-maker:develop-SNAPSHOT'
     profiles: [automq]
     depends_on:
       - kafka
       - automq
     environment:
-      - SOURCE=kafka.env.data.plane.net:9092
+      - SOURCE=kafka.env.data.plane.net:19092
       - DESTINATION=automq.env.data.plane.net:9095
-      - TOPICS=.*
+      - TOPICS=orders.created
     networks:
       - data-plane
 
@@ -279,9 +281,9 @@ services:
       - kafka
       - redpanda
     environment:
-      - SOURCE=kafka.env.data.plane.net:9092
+      - SOURCE=kafka.env.data.plane.net:19092
       - DESTINATION=redpanda.env.data.plane.net:9096
-      - TOPICS=.*
+      - TOPICS=orders.created
     networks:
       - data-plane
 
