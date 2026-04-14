@@ -23,6 +23,8 @@ services:
       JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:4444"
       ZILLA_PLATFORM_LICENSE_KEY: ${ZILLA_PLATFORM_LICENSE_KEY}
       ZILLA_PLATFORM_BOOTSTRAP_TOKEN_FILE: /run/secrets/platform/bootstrap-token
+      KAFKA_SASL_USERNAME: "admin"
+      KAFKA_SASL_PASSWORD: "admin-secret"
     command: bootstrap -v -e -l -w 1 --platform http://zilla.platform.net:8081/ -Pzilla.binding.socks.debug=true
     depends_on:
       kafka-init:
@@ -435,8 +437,8 @@ configs:
               - kafka.env.data.plane.net:9092
             sasl:
               mechanism: "scram-sha-512"
-              username: "admin"
-              password: "admin-secret"
+              username: "$${{env.KAFKA_SASL_USERNAME}}"
+              password: "$${{env.KAFKA_SASL_PASSWORD}}"
           exit: south_tcp_client
         south_tcp_client:
           type: tcp
