@@ -13,12 +13,13 @@ services:
     volumes:
       - gateway-data:/var/run/zilla
       - gateway-tls:/etc/zilla/tls:ro
+      - bootstrap-data:/run/secrets/platform:ro
     ports:
       - 9094:9094
       - 8082:8082
     environment:
       ZILLA_PLATFORM_LICENSE_KEY: ${ZILLA_PLATFORM_LICENSE_KEY}
-      ZILLA_PLATFORM_BOOTSTRAP_TOKEN: ${ZILLA_PLATFORM_BOOTSTRAP_TOKEN}
+      ZILLA_PLATFORM_BOOTSTRAP_TOKEN_FILE: /run/secrets/platform/bootstrap-token
     command: bootstrap -v -e -l -w 1 --platform http://zilla.platform.net:8081/ -Pzilla.binding.socks.debug=true
     depends_on:
       kafka-init:
@@ -42,14 +43,14 @@ services:
           memory: 1G
 
   kafka:
-    container_name: "kafka"
     image: bitnamilegacy/kafka:3.5
     restart: unless-stopped
     hostname: kafka.env.data.plane.net
     expose:
       - 9092
+      - 19092
     healthcheck:
-      test: /opt/bitnami/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka.env.data.plane.net:9092 || exit 1
+      test: /opt/bitnami/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka.env.data.plane.net:29092 || exit 1
       interval: 1s
       timeout: 60s
       retries: 60
@@ -59,13 +60,27 @@ services:
       KAFKA_CFG_BROKER_ID: "1"
       KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
       KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@127.0.0.1:9093"
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_CFG_LOG_DIRS: "/tmp/logs"
       KAFKA_CFG_PROCESS_ROLES: "broker,controller"
-      KAFKA_CFG_LISTENERS: "CLIENT://:9092,INTERNAL://:29092,CONTROLLER://:9093"
+      KAFKA_CFG_LISTENERS: "CLIENT://:9092,CLIENT_PLAIN://:19092,INTERNAL://:29092,CONTROLLER://:9093"
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,INTERNAL://kafka.env.data.plane.net:29092"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,CLIENT_PLAIN://kafka.env.data.plane.net:19092,INTERNAL://kafka.env.data.plane.net:29092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,CLIENT_PLAIN:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
+      KAFKA_CFG_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_CFG_SUPER_USERS: "User:${KAFKA_SASL_USER:-admin};User:${KAFKA_PLAIN_BROKER_USER:-broker};User:ANONYMOUS"
+      KAFKA_CFG_SASL_ENABLED_MECHANISMS: "PLAIN,SCRAM-SHA-256,SCRAM-SHA-512"
+      KAFKA_CLIENT_LISTENER_NAME: "CLIENT"
+      KAFKA_CLIENT_USERS: "${KAFKA_SASL_USER:-admin},${KAFKA_PRODUCER_USER:-producer-app},${KAFKA_CONSUMER_USER:-consumer-app}"
+      KAFKA_CLIENT_PASSWORDS: "${KAFKA_SASL_PASSWORD:-admin-secret},${KAFKA_PRODUCER_PASSWORD:-producer-secret},${KAFKA_CONSUMER_PASSWORD:-consumer-secret}"
+      KAFKA_CFG_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_PLAIN_BROKER_USER:-broker}"
+        password="${KAFKA_PLAIN_BROKER_PASSWORD:-broker-secret}"
+        user_${KAFKA_SASL_USER:-admin}="${KAFKA_SASL_PASSWORD:-admin-secret}"
+        user_${KAFKA_PRODUCER_USER:-producer-app}="${KAFKA_PRODUCER_PASSWORD:-producer-secret}"
+        user_${KAFKA_CONSUMER_USER:-consumer-app}="${KAFKA_CONSUMER_PASSWORD:-consumer-secret}";
       KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
     networks:
       - data-plane
@@ -179,6 +194,40 @@ services:
       - minio
       - mc
 
+  confluent:
+    image: confluentinc/cp-kafka:8.2.0
+    container_name: confluent
+    profiles: [confluent]
+    hostname: confluent.env.data.plane.net
+    expose:
+      - 49092
+    ports:
+      - '9097:9097'
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-broker-api-versions --bootstrap-server confluent.env.data.plane.net:49092 > /dev/null 2>&1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://confluent.env.data.plane.net:49092,PLAINTEXT_HOST://localhost:9097
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:49092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9097
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@confluent.env.data.plane.net:9093
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg
+    volumes:
+      - confluent-data:/var/lib/kafka/data
+    networks:
+      - data-plane
+
   schema-registry:
     image: confluentinc/cp-schema-registry:8.1.0
     restart: unless-stopped
@@ -191,7 +240,13 @@ services:
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry.env.data.plane.net
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka.env.data.plane.net:9092
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: SASL_PLAINTEXT://kafka.env.data.plane.net:9092
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: SASL_PLAINTEXT
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_MECHANISM: PLAIN
+      SCHEMA_REGISTRY_KAFKASTORE_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_SASL_USER:-admin}"
+        password="${KAFKA_SASL_PASSWORD:-admin-secret}";
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
       SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: schema-registry
       SCHEMA_REGISTRY_MASTER_ELIGIBILITY: "true"
@@ -202,15 +257,17 @@ services:
 
   mirrormaker-automq:
     container_name: "mirrormaker-automq"
-    image: 'wpietri/mirror-maker:2'
+    build:
+      context: ./mm2
+    image: 'mirror-maker:develop-SNAPSHOT'
     profiles: [automq]
     depends_on:
       - kafka
       - automq
     environment:
-      - SOURCE=kafka.env.data.plane.net:9092
+      - SOURCE=kafka.env.data.plane.net:19092
       - DESTINATION=automq.env.data.plane.net:9095
-      - TOPICS=.*
+      - TOPICS=orders.created
     networks:
       - data-plane
 
@@ -224,9 +281,29 @@ services:
       - kafka
       - redpanda
     environment:
-      - SOURCE=kafka.env.data.plane.net:9092
+      - SOURCE=kafka.env.data.plane.net:19092
       - DESTINATION=redpanda.env.data.plane.net:9096
-      - TOPICS=.*
+      - TOPICS=orders.created
+    networks:
+      - data-plane
+
+  mirrormaker-confluent:
+    container_name: "mirrormaker-confluent"
+    build:
+      context: ./mm2
+    image: 'mirror-maker:develop-SNAPSHOT'
+    profiles: [confluent]
+    depends_on:
+      confluent-init:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      confluent:
+        condition: service_healthy
+    environment:
+      - SOURCE=confluent.env.data.plane.net:49092
+      - DESTINATION=kafka.env.data.plane.net:19092
+      - TOPICS=orders.created
     networks:
       - data-plane
 
@@ -247,7 +324,6 @@ services:
       - gateway-tls:/etc/tls:ro
 
   kafka-init:
-    container_name: "kafka-init"
     image: bitnamilegacy/kafka:3.5
     hostname: kafka-init.env.data.plane.net
     depends_on:
@@ -260,8 +336,11 @@ services:
     volumes:
       - gateway-tls:/etc/tls:ro
     environment:
-      ACCESS_KEY: ${ACCESS_KEY:-}
-      SECRET_KEY: ${SECRET_KEY:-}
+      ZILLA_PLATFORM_ACCESS_KEY: ${ZILLA_PLATFORM_ACCESS_KEY:-}
+      ZILLA_PLATFORM_SECRET_KEY: ${ZILLA_PLATFORM_SECRET_KEY:-}
+      ZILLA_PLATFORM_SERVER_VALUE: ${ZILLA_PLATFORM_SERVER_VALUE:-}
+      ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER: ${ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER:-}
+      ZILLA_PLATFORM_SCHEMA_REGISTRY_URL: ${ZILLA_PLATFORM_SCHEMA_REGISTRY_URL:-}
     entrypoint: [ "/bin/bash", "-c" ]
     command:
       - |
@@ -271,7 +350,7 @@ services:
 
         echo "Creating topic: orders.created..."
         /opt/bitnami/kafka/bin/kafka-topics.sh \
-          --bootstrap-server kafka.env.data.plane.net:9092 \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
           --create --if-not-exists \
           --topic orders.created \
           --partitions 3 \
@@ -286,7 +365,7 @@ services:
         done
 
         echo "Registering JSON schema for orders.created-value..."
-        curl -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+        curl -sS -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
           --data '{"schemaType":"JSON","schema":"{\"type\":\"object\",\"properties\":{\"orderId\":{\"type\":\"string\"},\"status\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"}},\"required\":[\"orderId\",\"status\",\"timestamp\"]}"}' \
           http://schema-registry.env.data.plane.net:8081/subjects/orders.created-value/versions
 
@@ -294,6 +373,34 @@ services:
         echo "✓ Kafka initialization complete!"
         echo "  Topic: orders.created (3 partitions, 1 replica)"
         echo "  Schema: orders.created-value registered"
+
+  confluent-init:
+    image: confluentinc/cp-kafka:8.2.0
+    container_name: "confluent-init"
+    hostname: confluent-init.env.data.plane.net
+    profiles: [confluent]
+    depends_on:
+      confluent:
+        condition: service_healthy
+    networks:
+      - data-plane
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        set -e
+        echo "Creating topic: orders.created..."
+        kafka-topics \
+          --bootstrap-server confluent.env.data.plane.net:49092 \
+          --create --if-not-exists \
+          --topic orders.created \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo ""
+        echo "✓ Confluent initialization complete!"
+        echo "  Topic: orders.created (3 partitions, 1 replica)"
 
   gateway-init:
     container_name: "gateway-init"
@@ -328,6 +435,10 @@ volumes:
   gateway-data:
   gateway-tls:
   redpanda-data:
+  confluent-data:
+  bootstrap-data:
+    name: quickstart_bootstrap-data
+    external: true
 
 configs:
   zilla.yaml:
