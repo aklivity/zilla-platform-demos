@@ -79,7 +79,7 @@ The client never declares their tier. It is extracted from the JWT by Zilla and 
 
 ---
 
-## Services
+## Services (Data Plane)
 
 | Service           | Image                                     | Role                                                         |
 |-------------------|-------------------------------------------|--------------------------------------------------------------|
@@ -92,13 +92,40 @@ The client never declares their tier. It is extracted from the JWT by Zilla and 
 | `embedder`        | `python:3.12-slim`                        | Consumes `rag.chunks` → OpenAI Embeddings → Qdrant upsert    |
 | `rag-chain`       | `python:3.12-slim`                        | Consumes `rag.queries` → vector search → LLM → `rag.results` |
 
-### What each AI service does (simply)
+### What each AI service does
 
 **Embedder** — reads every document chunk that arrives on `rag.chunks`, asks OpenAI to turn the text into a list of 1536 numbers (a vector), and stores that vector in Qdrant alongside the original text and `visibility` label. Similar text gets similar numbers, so similar chunks become neighbours in Qdrant. Runs once per chunk. Knows nothing about queries or users.
 
 **Qdrant** — a vector database. Stores every chunk's vector and metadata. When the RAG chain searches it, it finds the chunks whose vectors are numerically closest to the query vector — which means closest in meaning. The tier visibility filter ensures a `standard` user's search never touches `confidential` points.
 
 **RAG chain** — the AI core. Reads a query from `rag.queries`, reads the `user-tier` Kafka header (set by Zilla from the JWT), embeds the question, searches Qdrant with a visibility filter, builds a context from the retrieved chunks, calls the LLM with that context, and writes the answer to `rag.results` with a `tier` header.
+
+---
+
+## Prerequisites
+
+* **Docker Engine** `24.0+`
+* **Docker Compose** plugin `2.34.0+`
+* At least **4 vCPUs** and **4 GB RAM**
+* A valid **Zilla Platform License**
+* **Python 3.x** (for `gen_token.py`)
+* An **OpenAI API key**
+
+---
+
+## Get a License
+
+Request a license key at https://www.aklivity.io/request-access, then set it in your `.env`:
+
+```
+ZILLA_PLATFORM_LICENSE_KEY=<license>
+```
+
+If the license is missing or invalid, you'll see:
+
+```
+License is invalid, contact support@aklivity.io to request a new license
+```
 
 ---
 
@@ -109,6 +136,11 @@ The client never declares their tier. It is extracted from the JWT by Zilla and 
 ```bash
 docker compose -f oci://ghcr.io/aklivity/zilla-platform/quickstart up --wait
 ```
+
+Once ready, open the **Zilla Platform Management Console** at http://localhost:8081/
+
+The first time you open the console, complete the one-time admin registration.
+See the [Admin Onboarding guide](https://docs.aklivity.io/zilla-platform/latest/platform/getting-started/admin-onboarding/).
 
 ### 2. Create `.env`
 
@@ -302,6 +334,35 @@ curl -k -X POST https://localhost:7143/queries \
 
 ---
 
+## Explore in the Zilla Platform Console
+
+The Zilla Platform console gives live visibility into the Kafka cluster and Gateway — no separate tooling needed.
+
+### Kafka topics
+
+Navigate to: **Environments → `QuickStart Environment` → Services → `QuickStart Kafka` → Topics**
+
+You'll see the three RAG topics:
+
+| Topic         | What you'll see in Messages                                               |
+|---------------|---------------------------------------------------------------------------|
+| `rag.chunks`  | Ingested document chunks, schema-validated JSON, key = `Idempotency-Key`  |
+| `rag.queries` | Submitted questions with `user-tier` header stamped by Zilla from the JWT |
+| `rag.results` | LLM answers with `tier` header, key = `query_id`                          |
+
+Click into any topic → **Messages** to inspect the message in real time as you run the demo steps.
+
+### Consumer groups
+
+Navigate to: **Environments → `QuickStart Environment` → Services → `QuickStart Kafka` → Consumer Groups**
+
+| Group               | Consumes      | What lag means                                   |
+|---------------------|---------------|--------------------------------------------------|
+| `embedder-service`  | `rag.chunks`  | Non-zero lag = embedder still processing chunks  |
+| `rag-chain-service` | `rag.queries` | Non-zero lag = RAG chain still answering queries |
+
+---
+
 ## API reference
 
 | Endpoint             | Method    | JWT scope       | Description                                                                                        |
@@ -388,18 +449,17 @@ curl -k -X POST https://localhost:7143/queries \
 
 ## Tear down
 
+Stop everything (keeps volumes for next run):
+
 ```bash
-# Stop services, keep Qdrant data
-docker compose down
-
+docker compose down && \
 docker compose -f oci://ghcr.io/aklivity/zilla-platform/quickstart down
-
 ```
 
-```bash
-# Full reset — wipe all volumes (re-ingestion required)
-docker compose down -v
+Full reset — wipe all data (re-ingestion required):
 
+```bash
+docker compose down -v --remove-orphans && \
 docker compose -f oci://ghcr.io/aklivity/zilla-platform/quickstart down --volumes --remove-orphans
 ```
 
