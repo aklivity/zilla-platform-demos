@@ -4,7 +4,7 @@ A production-shaped RAG pipeline demonstrating how **Zilla eliminates custom mid
 
 ---
 
-## What problems this demo solves
+## What problems Zilla solves
 
 | Problem                                                     | How Zilla solves it                                                                                     |
 |-------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
