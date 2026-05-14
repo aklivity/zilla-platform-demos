@@ -9,7 +9,7 @@
 :root{
   --bg:#0a0f1e;--card:#0f1a2e;--card2:#111827;--border:#1e2d3d;--border2:#243447;
   --blue:#3b82f6;--green:#10b981;--red:#ef4444;--amber:#f59e0b;--purple:#8b5cf6;
-  --text:#e2e8f0;--text2:#94a3b8;--text3:#4b6080;--code:#0d1117;
+  --text:#f1f5f9;--text2:#cbd5e1;--text3:#7a95b0;--code:#0d1117;
   --r:8px;--rs:5px;
 }
 html{scroll-behavior:smooth}
@@ -40,10 +40,10 @@ body::before{
 .hdr{padding:40px 0 28px;border-bottom:1px solid var(--border)}
 .hdr-top{display:flex;align-items:center;gap:14px;margin-bottom:10px}
 .logo-badge{
-  width:40px;height:40px;border-radius:10px;
-  background:linear-gradient(135deg,var(--blue),#6366f1);
-  display:flex;align-items:center;justify-content:center;font-size:20px;
+  width:96px;height:96px;border-radius:14px;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
 }
+.logo-badge img{width:100%;height:100%;object-fit:contain}
 h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
 .sub{font-size:13px;color:var(--text2);max-width:640px;margin-bottom:22px}
 
@@ -237,12 +237,6 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
 }
 .qinput:focus{border-color:var(--blue)}
 
-/* ── Tamper ── */
-.tamper-box{
-  background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.18);
-  border-radius:var(--rs);padding:14px 16px;font-size:13px;color:#fca5a5;margin-top:12px;
-}
-.tamper-box code{background:rgba(239,68,68,.15);border-radius:3px;padding:2px 5px;font-size:12px}
 
 /* ── Spinner ── */
 .spin{
@@ -250,6 +244,32 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
   border-top-color:currentColor;border-radius:50%;animation:rot .5s linear infinite;display:inline-block;
 }
 @keyframes rot{to{transform:rotate(360deg)}}
+
+/* ── Why section ── */
+.why{padding:28px 0 24px;border-bottom:1px solid var(--border)}
+.why-intro{font-size:14px;color:var(--text);max-width:820px;line-height:1.8}
+
+/* ── Tabs ── */
+.tab-bar{
+  display:flex;gap:0;border-bottom:1px solid var(--border);
+  margin-top:0;position:sticky;top:0;z-index:10;
+  background:var(--bg);
+}
+.tab-bar::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(10,15,30,.98),rgba(10,15,30,.92));
+  pointer-events:none;
+}
+.tab-btn{
+  position:relative;padding:14px 28px;background:transparent;border:none;
+  border-bottom:2px solid transparent;color:var(--text3);font-size:14px;
+  font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s;
+  letter-spacing:.2px;
+}
+.tab-btn:hover:not(.active){color:var(--text2);border-bottom-color:var(--border2)}
+.tab-btn.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tab-panel{display:none;padding-top:4px}
+.tab-panel.active{display:block}
 
 /* ── Scroll ── */
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -259,24 +279,59 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
 </head>
 <body>
 
-<div class="banner">
-  <strong>⚠ First:</strong> open <a href="https://localhost:7143" target="_blank">https://localhost:7143</a> in a new tab and accept the self-signed certificate, then return here.
-</div>
-
 <div class="wrap">
 
   <!-- Header -->
   <div class="hdr">
     <div class="hdr-top">
-      <div class="logo-badge">⚡</div>
-      <h1>Zilla RAG Pipeline Demo</h1>
+      <div class="logo-badge"><img src="aklivity.webp" alt="Aklivity"/></div>
+      <h1>Zilla Platform RAG Pipeline Demo</h1>
     </div>
-    <p class="sub">Interactive walkthrough — JWT auth, Kafka produce, schema validation, SSE streaming &amp; tier isolation. Replaces all curl commands.</p>
-    <div class="arch"><span class="b">POST /chunks</span>  <span class="d">──►</span> <span class="p">Zilla</span> (validate+produce) <span class="d">──►</span> <span class="g">rag.chunks</span>  <span class="d">──►</span> <span class="p">Embedder</span> <span class="d">──►</span> <span class="p">Qdrant</span>
-<span class="b">POST /queries</span> <span class="d">──►</span> <span class="p">Zilla</span> (<span class="a">JWT→user-tier</span>+produce) <span class="d">──►</span> <span class="g">rag.queries</span> <span class="d">──►</span> <span class="p">RAG Chain</span> <span class="d">──►</span> <span class="g">rag.results</span>
-<span class="b">GET /results/{id}</span> <span class="d">──►</span> <span class="p">Zilla SSE</span> (filter: <span class="a">tier == JWT identity</span>) <span class="d">◄──</span> <span class="g">rag.results</span></div>
+    <p class="sub">Kafka-backed RAG pipeline — JWT auth, schema validation, async LLM inference, and SSE streaming with tier-based access control. All infrastructure declared in <code style="font-size:12px;background:rgba(59,130,246,.1);border-radius:3px;padding:1px 6px;color:var(--blue)">zilla.yaml</code>.</p>
   </div>
 
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
+    <button class="tab-btn" onclick="switchTab('demo')">Interactive Demo</button>
+  </div>
+
+  <!-- Overview tab -->
+  <div class="tab-panel active" id="tab-overview">
+  <div class="why">
+    <div class="arch" style="margin-bottom:24px"><span class="b">POST /chunks</span>  <span class="d">──►</span> <span class="p">Zilla</span> (validate+produce) <span class="d">──►</span> <span class="g">rag.chunks</span>  <span class="d">──►</span> <span class="p">Embedder</span> <span class="d">──►</span> <span class="p">Qdrant</span>
+<span class="b">POST /queries</span> <span class="d">──►</span> <span class="p">Zilla</span> (<span class="a">JWT→user-tier</span>+produce) <span class="d">──►</span> <span class="g">rag.queries</span> <span class="d">──►</span> <span class="p">RAG Chain</span> <span class="d">──►</span> <span class="g">rag.results</span>
+<span class="b">GET /results/{id}</span> <span class="d">──►</span> <span class="p">Zilla SSE</span> (filter: <span class="a">tier == JWT identity</span>) <span class="d">◄──</span> <span class="g">rag.results</span></div>
+    <div class="section-label" style="margin-top:0">Why Kafka + Zilla Platform for AI Pipelines</div>
+    <p class="why-intro">
+      LLM inference is asynchronous by nature. Requests can take 5 to 30 seconds, trigger multiple agents, call external APIs, and stream results over time — but most AI systems are still built on synchronous HTTP APIs that break under production workloads.
+      <br/><br/>
+      That's why every AI platform eventually rebuilds the same infrastructure:
+    </p>
+    <ul style="margin:14px 0 18px 0;padding-left:22px;display:flex;flex-direction:column;gap:6px;color:var(--text2);font-size:14px;line-height:1.7">
+      <li>streaming delivery</li>
+      <li>auth and identity propagation</li>
+      <li>tenant-aware routing</li>
+      <li>observability and replay</li>
+      <li>scaling and reliability</li>
+    </ul>
+    <p class="why-intro" style="margin-bottom:14px">
+      None of this is AI logic.
+      <br/><br/>
+      Kafka provides the asynchronous backbone AI pipelines need — but Kafka alone is not AI-ready.
+      <br/><br/>
+      Zilla Platform makes Kafka AI-ready by turning it into a secure, real-time runtime for AI systems. With a single <code style="background:rgba(59,130,246,.12);border-radius:3px;padding:1px 6px;color:var(--blue);font-size:12px">zilla.yaml</code>, Zilla exposes Kafka through modern APIs and protocols while handling streaming, auth, schema enforcement, routing, and policy enforcement automatically.
+    </p>
+    <p style="font-size:14px;line-height:2;color:var(--text)">
+      Kafka becomes the event-driven backbone for AI.<br/>
+      Zilla becomes the AI gateway and runtime layer.<br/>
+      Your services focus only on AI logic.
+    </p>
+  </div><!-- /why -->
+  </div><!-- /tab-overview -->
+
+  <!-- Demo tab -->
+  <div class="tab-panel" id="tab-demo">
   <!-- Tokens -->
   <div class="section-label">JWT Tokens — auto-generated on load</div>
   <div class="tok-grid">
@@ -284,7 +339,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
       <div class="tok-tier tier-free">Free Tier</div>
       <div class="tok-val" id="tv-free">Generating…</div>
       <div class="tok-meta">
-        <span class="expiry" id="expiry">—</span>
+        <span class="expiry" id="expiry-free">—</span>
         <button class="btn-copy" onclick="copyTok('free',this)">Copy</button>
       </div>
     </div>
@@ -292,7 +347,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
       <div class="tok-tier tier-std">Standard Tier</div>
       <div class="tok-val" id="tv-standard">Generating…</div>
       <div class="tok-meta">
-        <span class="expiry"></span>
+        <span class="expiry" id="expiry-standard">—</span>
         <button class="btn-copy" onclick="copyTok('standard',this)">Copy</button>
       </div>
     </div>
@@ -300,7 +355,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
       <div class="tok-tier tier-ent">Enterprise Tier</div>
       <div class="tok-val" id="tv-enterprise">Generating…</div>
       <div class="tok-meta">
-        <span class="expiry"></span>
+        <span class="expiry" id="expiry-enterprise">—</span>
         <button class="btn-copy" onclick="copyTok('enterprise',this)">Copy</button>
       </div>
     </div>
@@ -533,7 +588,7 @@ curl -k -X POST https://localhost:7143/queries \
       <div class="sse-grid-3">
         <div class="sse-panel">
           <div class="sse-ph">
-            <span class="sse-ph-title">Stream A <span class="h-blue">std</span></span>
+            <span class="sse-ph-title">Stream A <span class="h-blue">STANDARD</span></span>
             <div class="sse-status"><div class="dot" id="d-xstd"></div><span id="ss-xstd" style="font-size:9px">Disconnected</span></div>
           </div>
           <div class="sse-out" id="so-xstd" style="min-height:70px"><div class="sse-placeholder">Will stay silent</div></div>
@@ -553,7 +608,7 @@ curl -k -X POST https://localhost:7143/queries \
         </div>
         <div class="sse-panel">
           <div class="sse-ph">
-            <span class="sse-ph-title">Stream C <span class="h-amber">ent</span></span>
+            <span class="sse-ph-title">Stream C <span class="h-amber">ENTERPRISE</span></span>
             <div class="sse-status"><div class="dot" id="d-xent"></div><span id="ss-xent" style="font-size:9px">Disconnected</span></div>
           </div>
           <div class="sse-out" id="so-xent" style="min-height:70px"><div class="sse-placeholder">Will receive result</div></div>
@@ -585,47 +640,19 @@ curl -k -N -H "Authorization: Bearer $TOKEN_ENT" \
     </div>
   </div>
 
-  <!-- ── STEP 6 ── -->
-  <div class="step" id="s6">
-    <div class="step-hdr" onclick="toggleStep('s6')">
-      <div class="step-num">6</div>
-      <div class="step-info">
-        <div class="step-title">Tamper Test</div>
-        <div class="step-desc">Standard token claims enterprise tier in body — Zilla ignores it, stamps from JWT</div>
-      </div>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="step-body">
-      <div class="alert">The request uses a <strong>standard token</strong> but includes <code>"user_tier":"enterprise"</code> in the JSON body. Zilla extracts tier exclusively from the JWT identity claim — the body field is ignored entirely.</div>
-      <div class="code-block" style="margin-bottom:12px">{
-  "query_id": "q-tamper-1",
-  "question": "What are Zilla Plus features?",
-  <span style="color:var(--red)">"user_tier": "enterprise"</span>  ← Zilla ignores this
-}</div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-red" onclick="sendTamper()">Send Tamper Request</button>
-        <span id="s6-stat"></span>
-      </div>
-      <div id="tamper-box" class="tamper-box" style="display:none">
-        <strong>Zilla stamped from JWT:</strong> <code>user-tier: standard</code><br/>
-        Body field <code>user_tier: enterprise</code> was stripped and ignored.<br/>
-        RAG chain sees: <code>roles=['standard']</code> — public + internal visibility only.
-      </div>
-      <button class="curl-toggle" onclick="toggleEl('cc6')">▾ curl equivalent</button>
-      <div class="code-block" id="cc6" style="display:none">curl -k -X POST https://localhost:7143/queries \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN_STD" \
-  -H "Idempotency-Key: q-tamper-1" \
-  -d '{"query_id":"q-tamper-1","question":"What are Zilla Plus features?","user_tier":"enterprise"}'
-# → 204  but RAG chain log: roles=['standard']  ← JWT identity, not body</div>
-      <div class="rlog" id="log6" style="display:none"></div>
-    </div>
-  </div>
-
   <div style="height:48px"></div>
+  </div><!-- /tab-demo -->
+
 </div><!-- /wrap -->
 
 <script>
+// ── Tabs ──────────────────────────────────────────────────────────────────
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',['overview','demo'][i]===name));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 const T = {free:null,standard:null,enterprise:null};
 const SSE = {};
@@ -744,8 +771,11 @@ async function initTokens(){
 function updateExpiry(){
   const rem=expAt-Math.floor(Date.now()/1000);
   const h=Math.floor(rem/3600),m=Math.floor((rem%3600)/60);
-  const el=document.getElementById('expiry');
-  if(el) el.textContent=`Expires in ${h}h ${m}m`;
+  const label=`Expires in ${h}h ${m}m`;
+  ['free','standard','enterprise'].forEach(t=>{
+    const el=document.getElementById('expiry-'+t);
+    if(el) el.textContent=label;
+  });
 }
 
 function copyTok(tier,btn){
@@ -960,22 +990,6 @@ async function submitCrossQuery(){
   }
 }
 
-// ── Step 6 tamper ─────────────────────────────────────────────────────────────
-async function sendTamper(){
-  if(!T.standard){alert('Tokens not ready');return;}
-  const btn=document.querySelector('[onclick="sendTamper()"]');
-  btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
-  try{
-    const r=await post('/queries',{query_id:'q-tamper-1',question:'What are Zilla Plus features?',user_tier:'enterprise'},T.standard,'q-tamper-1');
-    setStat('s6-stat',r.status,'');
-    log('log6','ok',`HTTP ${r.status} — standard token used with user_tier:enterprise in body`);
-    log('log6','info','Zilla stamped user-tier: standard from JWT identity, body field ignored');
-    if(r.status===204){document.getElementById('tamper-box').style.display='block';markDone('s6');}
-    btn.disabled=false;btn.textContent='Retry';
-  }catch(e){
-    log('log6','err',e.message);btn.disabled=false;btn.textContent='Retry';
-  }
-}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 (function(){

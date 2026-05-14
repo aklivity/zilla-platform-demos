@@ -1,20 +1,39 @@
 # Zilla Platform RAG Pipeline Demo
 
-A production-shaped RAG pipeline demonstrating how **Zilla eliminates custom middleware** for AI applications — no Kafka producer code, no SSE server, no auth middleware, no tier-routing logic. Every infrastructure concern is declared in `zilla.yaml`; the AI services contain pure AI logic.
+LLM inference is asynchronous by nature. Requests can take 5 to 30 seconds, trigger multiple agents, call external APIs, and stream results over time — but most AI systems are still built on synchronous HTTP APIs that break under production workloads.
+
+That's why every AI platform eventually rebuilds the same infrastructure:
+
+- streaming delivery
+- auth and identity propagation
+- data governance
+- tenant-aware routing
+- observability and replay
+- scaling and reliability
+
+None of this is AI logic.
+
+Kafka provides the asynchronous backbone AI pipelines need — but Kafka alone is not AI-ready.
+
+**Zilla Platform makes Kafka AI-ready** by turning it into a secure, real-time runtime for AI systems. With a single `zilla.yaml`, Zilla exposes Kafka through modern APIs and protocols while handling streaming, auth, schema enforcement, routing, and policy enforcement automatically.
+
+**Kafka becomes the event-driven backbone for AI.**  
+**Zilla becomes the AI gateway and runtime layer.**  
+**Your services focus only on AI logic.**
 
 ---
 
-## What problems Zilla solves
+## What this demo shows
 
-| Problem                                                     | How Zilla solves it                                                                                     |
-|-------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
-| Clients need to write to Kafka without a Kafka SDK          | `http-kafka` produce — `POST /chunks` and `POST /queries` write to Kafka over plain HTTPS               |
-| LLM responses are slow — HTTP connections time out          | Async pipeline: client gets `204` immediately, streams the answer via SSE when ready                    |
-| Bad data corrupts the vector store and wastes API calls     | Inline schema validation rejects malformed chunks `400` at the gateway before they enter Kafka          |
-| Users must not see documents above their access tier        | Gateway extracts JWT `roles`, stamps `user-tier` as a Kafka header — the client body cannot override it |
-| Enterprise results must never leak to standard streams      | `sse-kafka` header filter: result `tier` must match the caller's JWT identity before delivery           |
-| Retried ingestion creates duplicate embeddings              | `Idempotency-Key` becomes the Kafka message key — same key, same partition, no duplicate processing     |
-| Every AI service needs its own Kafka producer and auth code | Zilla owns the HTTP↔Kafka boundary — AI services only read and write Kafka topics                       |
+| Problem                                                     | How Zilla Platform Solves It                                                                                   |
+|-------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| Clients need Kafka SDKs to talk to Kafka                    | Clients use plain HTTPS APIs while Zilla writes directly to Kafka                                              |
+| LLM responses take too long for normal HTTP                 | Zilla makes the pipeline asynchronous: clients get an immediate response and results stream back later via SSE |
+| Bad data can corrupt vector stores                          | Zilla validates schemas at the gateway before data reaches Kafka                                               |
+| Users should only access data for their tier                | Zilla extracts identity and tier from JWTs and enforces it automatically                                       |
+| Enterprise AI results must not leak to other users          | Zilla filters streamed responses based on user identity and access tier                                        |
+| Retries can create duplicate embeddings                     | Zilla uses idempotency keys to prevent duplicate processing                                                    |
+| Every AI service ends up rebuilding Kafka and auth plumbing | Zilla handles APIs, streaming, auth, routing, and Kafka integration so AI services only focus on AI logic      |
 
 ---
 
@@ -167,30 +186,34 @@ docker compose up --wait
 
 ---
 
-## Generate test JWT tokens
+## Running the demo
+
+The gateway listens on **HTTPS port 7143** (TLS/HTTP2, self-signed cert).
+
+### Option A — Interactive demo page (recommended)
+
+Open `demo.html` directly in your browser (no web server needed):
+
+```bash
+open rag-project/demo.html
+```
+
+The page auto-generates RS256 JWTs in-browser, walks through each step with one-click buttons, shows live SSE streams, and displays the curl equivalent for every request.
+
+![](demo.png)
+
+### Option B — curl
+
+Generate tokens first:
 
 ```bash
 pip install pyjwt cryptography
 
-TOKEN_FREE=$(python3 gen_token.py free-user@example.com free)
 TOKEN_STD=$(python3 gen_token.py std-user@example.com standard)
 TOKEN_ENT=$(python3 gen_token.py ent-user@example.com enterprise)
 ```
 
-Two JWT claims serve different purposes:
-
-| Claim   | Value                                    | Used by                                                             |
-|---------|------------------------------------------|---------------------------------------------------------------------|
-| `scope` | `"proxy:publish proxy:stream"`           | Zilla JWT guard — authorises the HTTP routes                        |
-| `roles` | `"standard"` / `"enterprise"` / `"free"` | Zilla `identity` → Kafka `user-tier` header → RAG chain tier filter |
-
----
-
-## Running the demo
-
-The gateway listens on **HTTPS port 7143** (TLS/HTTP2, self-signed cert). Use `-k` for local dev.
-
-### Step 1 — Ingest document chunks
+#### Step 1 — Ingest document chunks
 
 ```bash
 # Public chunk — visible to all tiers
@@ -199,11 +222,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: chunk-0" \
-  -d '{
-    "doc_id": "zilla-overview", "chunk_index": 0,
-    "text": "Zilla is a multi-protocol edge gateway for Kafka.",
-    "visibility": "public"
-  }'
+  -d '{"doc_id":"zilla-overview","chunk_index":0,"text":"Zilla is a multi-protocol edge gateway for Kafka.","visibility":"public"}'
 # → 204
 
 # Internal chunk — standard + enterprise only
@@ -212,11 +231,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: chunk-1" \
-  -d '{
-    "doc_id": "zilla-overview", "chunk_index": 1,
-    "text": "Zilla Platform publishes governed API Data Products with versioning and self-service subscriptions.",
-    "visibility": "internal"
-  }'
+  -d '{"doc_id":"zilla-overview","chunk_index":1,"text":"Zilla Platform publishes governed API Data Products with versioning and self-service subscriptions.","visibility":"internal"}'
 # → 204
 
 # Confidential chunk — enterprise only
@@ -225,11 +240,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: chunk-2" \
-  -d '{
-    "doc_id": "zilla-overview", "chunk_index": 2,
-    "text": "Zilla Plus includes Secure Public Access, AWS MSK integration, and virtual Kafka clusters.",
-    "visibility": "confidential"
-  }'
+  -d '{"doc_id":"zilla-overview","chunk_index":2,"text":"Zilla Plus includes Secure Public Access, AWS MSK integration, and virtual Kafka clusters.","visibility":"confidential"}'
 # → 204
 ```
 
@@ -240,7 +251,7 @@ docker compose logs -f embedder
 # Upserted 3 points
 ```
 
-### Step 2 — Schema validation (shift-left)
+#### Step 2 — Schema validation
 
 ```bash
 # Missing required field "chunk_index" — rejected at the gateway, never enters Kafka
@@ -249,41 +260,27 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: chunk-bad" \
-  -d '{"doc_id": "test", "text": "missing chunk_index"}'
-# → 400  (embedder logs stay silent — message never entered Kafka)
+  -d '{"doc_id":"test","text":"missing chunk_index"}'
+# → 400
 ```
 
-### Step 3 — Query and SSE result streaming
-
-No `user_tier` in the body — the tier is extracted from the JWT by Zilla.
-
-**Terminal A — open the SSE stream:**
+#### Step 3 — Query and SSE streaming (standard tier)
 
 ```bash
-curl -k -N \
-  -H "Authorization: Bearer $TOKEN_STD" \
-  "https://localhost:7143/results/q-std-1"
-```
+# Terminal A — open the SSE stream
+curl -k -N -H "Authorization: Bearer $TOKEN_STD" "https://localhost:7143/results/q-std-1"
 
-**Terminal B — submit the query:**
-
-```bash
+# Terminal B — submit the query
 curl -k -s -o /dev/null -w "%{http_code}\n" \
   -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: q-std-1" \
-  -d '{"query_id": "q-std-1", "question": "What is Zilla?"}'
-# → 204
+  -d '{"query_id":"q-std-1","question":"What is Zilla?"}'
+# → 204  Terminal A receives the answer
 ```
 
-Terminal A receives the answer. RAG chain log shows:
-
-```
-query_id=q-std-1 user=anonymous roles=['standard'] vis=['public', 'internal']
-```
-
-### Step 4 — Tier-based access
+#### Step 4 — Tier-based access (enterprise)
 
 ```bash
 # Terminal A — enterprise SSE stream
@@ -294,13 +291,11 @@ curl -k -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: q-ent-1" \
-  -d '{"query_id": "q-ent-1", "question": "What are Zilla Plus features?"}'
+  -d '{"query_id":"q-ent-1","question":"What are Zilla Plus features?"}'
 # → Terminal A receives richer answer including confidential chunk
 ```
 
-### Step 5 — Cross-tier isolation
-
-Standard SSE stream open. Enterprise query submitted. Standard stream receives nothing.
+#### Step 5 — Cross-tier isolation
 
 ```bash
 # Terminal A — standard user waiting
@@ -311,25 +306,11 @@ curl -k -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: q-cross-1" \
-  -d '{"query_id": "q-cross-1", "question": "What is Zilla?"}'
+  -d '{"query_id":"q-cross-1","question":"What is Zilla?"}'
 
 # Terminal A stays silent — sse-kafka filter blocks enterprise result from standard stream
-# Terminal C — enterprise user opens their own stream (receives immediately)
+# Terminal C — enterprise user opens their own stream and receives the answer
 curl -k -N -H "Authorization: Bearer $TOKEN_ENT" "https://localhost:7143/results/q-cross-1"
-```
-
-### Step 6 — Tamper test
-
-```bash
-# Standard token — client tries to claim enterprise tier in body
-# Zilla ignores the body field; stamps tier from JWT identity
-curl -k -X POST https://localhost:7143/queries \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN_STD" \
-  -H "Idempotency-Key: q-tamper-1" \
-  -d '{"query_id": "q-tamper-1", "question": "What is Zilla?", "user_tier": "enterprise"}'
-
-# RAG chain log: roles=['standard']  ← Zilla stamped from JWT, body ignored
 ```
 
 ---
