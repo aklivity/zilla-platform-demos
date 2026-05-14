@@ -333,6 +333,8 @@ You'll see the three RAG topics:
 
 Click into any topic → **Messages** to inspect the message in real time as you run the demo steps.
 
+![](explore.png)
+
 ### Consumer groups
 
 Navigate to: **Environments → `QuickStart Environment` → Services → `QuickStart Kafka` → Consumer Groups**
