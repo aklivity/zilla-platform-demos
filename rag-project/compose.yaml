@@ -555,7 +555,8 @@ configs:
               with:
                 topic: rag.results
                 filters:
-                  - headers:
+                  - key: $${params.queryId}
+                    headers:
                       tier: "$${guarded['authn_jwt'].identity}"
         http_kafka_mapping:
           type: http-kafka
