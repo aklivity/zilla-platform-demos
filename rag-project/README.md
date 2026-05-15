@@ -222,7 +222,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: chunk-0" \
-  -d '{"doc_id":"zilla-overview","chunk_index":0,"text":"Zilla is a multi-protocol edge gateway for Kafka.","visibility":"public"}'
+  -d '{"doc_id":"company-handbook","chunk_index":0,"text":"Our company was founded in 2018 and operates across 12 countries with over 3,000 employees worldwide.","visibility":"public"}'
 # → 204
 
 # Internal chunk — standard + enterprise only
@@ -231,7 +231,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: chunk-1" \
-  -d '{"doc_id":"zilla-overview","chunk_index":1,"text":"Zilla Platform publishes governed API Data Products with versioning and self-service subscriptions.","visibility":"internal"}'
+  -d '{"doc_id":"company-handbook","chunk_index":1,"text":"Employees are entitled to 25 days of paid leave per year, plus public holidays. Leave requests must be submitted at least 2 weeks in advance.","visibility":"internal"}'
 # → 204
 
 # Confidential chunk — enterprise only
@@ -240,7 +240,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: chunk-2" \
-  -d '{"doc_id":"zilla-overview","chunk_index":2,"text":"Zilla Plus includes Secure Public Access, AWS MSK integration, and virtual Kafka clusters.","visibility":"confidential"}'
+  -d '{"doc_id":"company-handbook","chunk_index":2,"text":"Q4 2025 compensation review: senior engineers received an average 12% merit increase. Band L5 base range is $180k–$230k.","visibility":"confidential"}'
 # → 204
 ```
 
@@ -276,7 +276,7 @@ curl -k -s -o /dev/null -w "%{http_code}\n" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: q-std-1" \
-  -d '{"query_id":"q-std-1","question":"What is Zilla?"}'
+  -d '{"query_id":"q-std-1","question":"How many days of paid leave do employees get?"}'
 # → 204  Terminal A receives the answer
 ```
 
@@ -291,7 +291,7 @@ curl -k -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: q-ent-1" \
-  -d '{"query_id":"q-ent-1","question":"What are Zilla Plus features?"}'
+  -d '{"query_id":"q-ent-1","question":"What was the L5 compensation range in the Q4 review?"}'
 # → Terminal A receives richer answer including confidential chunk
 ```
 
@@ -306,7 +306,7 @@ curl -k -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: q-cross-1" \
-  -d '{"query_id":"q-cross-1","question":"What is Zilla?"}'
+  -d '{"query_id":"q-cross-1","question":"What was the L5 compensation range in the Q4 review?"}'
 
 # Terminal A stays silent — sse-kafka filter blocks enterprise result from standard stream
 # Terminal C — enterprise user opens their own stream and receives the answer

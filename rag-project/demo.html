@@ -381,7 +381,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
               <span class="badge b-std">standard token</span>
               <code style="font-size:9px;color:var(--text3)">chunk-0</code>
             </div>
-            <div class="chunk-text">"Zilla is a multi-protocol edge gateway for Kafka."</div>
+            <div class="chunk-text">"Our company was founded in 2018 and operates across 12 countries with over 3,000 employees worldwide."</div>
           </div>
           <div class="chunk-act">
             <span id="sc0"></span>
@@ -395,7 +395,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
               <span class="badge b-std">standard token</span>
               <code style="font-size:9px;color:var(--text3)">chunk-1</code>
             </div>
-            <div class="chunk-text">"Zilla Platform publishes governed API Data Products with versioning and self-service subscriptions."</div>
+            <div class="chunk-text">"Employees are entitled to 25 days of paid leave per year, plus public holidays. Leave requests must be submitted at least 2 weeks in advance."</div>
           </div>
           <div class="chunk-act">
             <span id="sc1"></span>
@@ -409,7 +409,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
               <span class="badge b-ent">enterprise token</span>
               <code style="font-size:9px;color:var(--text3)">chunk-2</code>
             </div>
-            <div class="chunk-text">"Zilla Plus includes Secure Public Access, AWS MSK integration, and virtual Kafka clusters."</div>
+            <div class="chunk-text">"Q4 2025 compensation review: senior engineers received an average 12% merit increase. Band L5 base range is $180k–$230k."</div>
           </div>
           <div class="chunk-act">
             <span id="sc2"></span>
@@ -424,7 +424,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: chunk-0" \
-  -d '{"doc_id":"zilla-overview","chunk_index":0,"text":"Zilla is a multi-protocol edge gateway for Kafka.","visibility":"public"}'
+  -d '{"doc_id":"company-handbook","chunk_index":0,"text":"Our company was founded in 2018 and operates across 12 countries with over 3,000 employees worldwide.","visibility":"public"}'
 # → 204</div>
       <div class="rlog" id="log1" style="display:none"></div>
     </div>
@@ -490,7 +490,7 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
           <div class="sse-out">
             <div class="qform">
               <div><div class="qlabel">Query ID</div><input class="qinput" id="qi-std" value="q-std-1"/></div>
-              <div><div class="qlabel">Question</div><input class="qinput" id="qq-std" value="What is Zilla?"/></div>
+              <div><div class="qlabel">Question</div><input class="qinput" id="qq-std" value="How many days of paid leave do employees get?"/></div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <button class="btn btn-blue" onclick="submitQuery('std','standard')">Submit Query →</button>
                 <span id="qs-std"></span>
@@ -510,7 +510,7 @@ curl -k -s -o /dev/null -w "%{http_code}" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_STD" \
   -H "Idempotency-Key: q-std-1" \
-  -d '{"query_id":"q-std-1","question":"What is Zilla?"}'
+  -d '{"query_id":"q-std-1","question":"How many days of paid leave do employees get?"}'
 # → 204, Terminal A receives the answer</div>
     </div>
   </div>
@@ -545,7 +545,7 @@ curl -k -s -o /dev/null -w "%{http_code}" \
           <div class="sse-out">
             <div class="qform">
               <div><div class="qlabel">Query ID</div><input class="qinput" id="qi-ent" value="q-ent-1"/></div>
-              <div><div class="qlabel">Question</div><input class="qinput" id="qq-ent" value="What are Zilla Plus features?"/></div>
+              <div><div class="qlabel">Question</div><input class="qinput" id="qq-ent" value="What was the L5 compensation range in the Q4 review?"/></div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <button class="btn btn-blue" onclick="submitQuery('ent','enterprise')">Submit Query →</button>
                 <span id="qs-ent"></span>
@@ -564,7 +564,7 @@ curl -k -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: q-ent-1" \
-  -d '{"query_id":"q-ent-1","question":"What are Zilla Plus features?"}'
+  -d '{"query_id":"q-ent-1","question":"What was the L5 compensation range in the Q4 review?"}'
 # → Terminal A receives richer answer including confidential chunk</div>
     </div>
   </div>
@@ -601,7 +601,7 @@ curl -k -X POST https://localhost:7143/queries \
           <div class="sse-ph"><span class="sse-ph-title">Submit <span class="h-amber">enterprise</span></span></div>
           <div class="sse-out" style="min-height:70px">
             <div style="font-size:10px;color:var(--text2);margin-bottom:6px">Query ID: <code id="cross-qid-mid" style="color:var(--amber)"></code></div>
-            <div style="font-size:10px;color:var(--text2);margin-bottom:10px">Question: "What is Zilla?"</div>
+            <div style="font-size:10px;color:var(--text2);margin-bottom:10px">Question: "What was the L5 compensation range in the Q4 review?"</div>
             <button class="btn btn-blue" style="width:100%;justify-content:center" onclick="submitCrossQuery()">Submit Enterprise Query</button>
             <span id="xs-stat" style="display:block;margin-top:8px;font-size:10px"></span>
           </div>
@@ -631,7 +631,7 @@ curl -k -X POST https://localhost:7143/queries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN_ENT" \
   -H "Idempotency-Key: $CROSS_QID" \
-  -d "{\"query_id\":\"$CROSS_QID\",\"question\":\"What is Zilla?\"}"
+  -d "{\"query_id\":\"$CROSS_QID\",\"question\":\"What was the L5 compensation range in the Q4 review?\"}"
 
 # Terminal C — enterprise stream (receives answer)
 curl -k -N -H "Authorization: Bearer $TOKEN_ENT" \
@@ -819,9 +819,9 @@ async function post(path,body,token,ikey){
 
 // ── Step 1 ───────────────────────────────────────────────────────────────────
 const CHUNKS=[
-  {id:'chunk-0',tier:'standard',body:{doc_id:'zilla-overview',chunk_index:0,text:'Zilla is a multi-protocol edge gateway for Kafka.',visibility:'public'}},
-  {id:'chunk-1',tier:'standard',body:{doc_id:'zilla-overview',chunk_index:1,text:'Zilla Platform publishes governed API Data Products with versioning and self-service subscriptions.',visibility:'internal'}},
-  {id:'chunk-2',tier:'enterprise',body:{doc_id:'zilla-overview',chunk_index:2,text:'Zilla Plus includes Secure Public Access, AWS MSK integration, and virtual Kafka clusters.',visibility:'confidential'}},
+  {id:'chunk-0',tier:'standard',body:{doc_id:'company-handbook',chunk_index:0,text:'Our company was founded in 2018 and operates across 12 countries with over 3,000 employees worldwide.',visibility:'public'}},
+  {id:'chunk-1',tier:'standard',body:{doc_id:'company-handbook',chunk_index:1,text:'Employees are entitled to 25 days of paid leave per year, plus public holidays. Leave requests must be submitted at least 2 weeks in advance.',visibility:'internal'}},
+  {id:'chunk-2',tier:'enterprise',body:{doc_id:'company-handbook',chunk_index:2,text:'Q4 2025 compensation review: senior engineers received an average 12% merit increase. Band L5 base range is $180k–$230k.',visibility:'confidential'}},
 ];
 
 async function sendChunk(i){
@@ -983,7 +983,7 @@ async function submitCrossQuery(){
   const statEl=document.getElementById('xs-stat');
   if(statEl)statEl.innerHTML='<span class="spin"></span>';
   try{
-    const r=await post('/queries',{query_id:crossQid,question:'What is Zilla?'},T.enterprise,crossQid);
+    const r=await post('/queries',{query_id:crossQid,question:'What was the L5 compensation range in the Q4 review?'},T.enterprise,crossQid);
     if(statEl) statEl.innerHTML=`<span class="stat ${r.status===204?'s-ok':'s-err'}">${r.status}${r.status===204?' — result delivered to enterprise stream only':''}</span>`;
   }catch(e){
     if(statEl)statEl.innerHTML=`<span style="color:var(--red);font-size:10px">${h(e.message)}</span>`;
