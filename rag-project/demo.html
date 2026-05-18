@@ -271,6 +271,11 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
 .tab-panel{display:none;padding-top:4px}
 .tab-panel.active{display:block}
 
+/* ── Burst panels ── */
+#burst-panels{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+@media(max-width:900px){#burst-panels{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:540px){#burst-panels{grid-template-columns:1fr 1fr}}
+
 /* ── Scroll ── */
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -435,35 +440,6 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
     <div class="step-hdr" onclick="toggleStep('s2')">
       <div class="step-num">2</div>
       <div class="step-info">
-        <div class="step-title">Schema Validation — Shift Left</div>
-        <div class="step-desc">Send a malformed chunk missing chunk_index — Zilla rejects 400 before Kafka is touched</div>
-      </div>
-      <span class="chevron">▾</span>
-    </div>
-    <div class="step-body">
-      <div class="alert">The payload below is missing required field <code>chunk_index</code>. Zilla's inline JSON schema validation returns <strong>HTTP 400</strong>. The message never reaches Kafka — embedder logs stay silent.</div>
-      <div class="code-block" style="margin-bottom:12px">{"doc_id": "test", "text": "missing chunk_index field"}</div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-red" onclick="sendBadChunk()">Send Invalid Request</button>
-        <span id="s2-stat"></span>
-      </div>
-      <button class="curl-toggle" onclick="toggleEl('cc2')">▾ curl equivalent</button>
-      <div class="code-block" id="cc2" style="display:none">curl -k -s -o /dev/null -w "%{http_code}" \
-  -X POST https://localhost:7143/chunks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN_STD" \
-  -H "Idempotency-Key: chunk-bad" \
-  -d '{"doc_id":"test","text":"missing chunk_index field"}'
-# → 400  (embedder logs stay silent — never entered Kafka)</div>
-      <div class="rlog" id="log2" style="display:none"></div>
-    </div>
-  </div>
-
-  <!-- ── STEP 3 ── -->
-  <div class="step" id="s3">
-    <div class="step-hdr" onclick="toggleStep('s3')">
-      <div class="step-num">3</div>
-      <div class="step-info">
         <div class="step-title">Query + SSE Stream (Standard Tier)</div>
         <div class="step-desc">Open SSE stream first, then submit query — answer streams back via server-sent events</div>
       </div>
@@ -499,8 +475,8 @@ h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
           </div>
         </div>
       </div>
-      <button class="curl-toggle" onclick="toggleEl('cc3')">▾ curl equivalent</button>
-      <div class="code-block" id="cc3" style="display:none"># Terminal A — open SSE stream
+      <button class="curl-toggle" onclick="toggleEl('cc2')">▾ curl equivalent</button>
+      <div class="code-block" id="cc2" style="display:none"># Terminal A — open SSE stream
 curl -k -N -H "Authorization: Bearer $TOKEN_STD" \
   "https://localhost:7143/results/q-std-1"
 
@@ -515,10 +491,10 @@ curl -k -s -o /dev/null -w "%{http_code}" \
     </div>
   </div>
 
-  <!-- ── STEP 4 ── -->
-  <div class="step" id="s4">
-    <div class="step-hdr" onclick="toggleStep('s4')">
-      <div class="step-num">4</div>
+  <!-- ── STEP 3 ── -->
+  <div class="step" id="s3">
+    <div class="step-hdr" onclick="toggleStep('s3')">
+      <div class="step-num">3</div>
       <div class="step-info">
         <div class="step-title">Enterprise Tier Query</div>
         <div class="step-desc">Enterprise JWT unlocks confidential chunks — RAG chain returns richer answer</div>
@@ -554,8 +530,8 @@ curl -k -s -o /dev/null -w "%{http_code}" \
           </div>
         </div>
       </div>
-      <button class="curl-toggle" onclick="toggleEl('cc4')">▾ curl equivalent</button>
-      <div class="code-block" id="cc4" style="display:none"># Terminal A — enterprise SSE stream
+      <button class="curl-toggle" onclick="toggleEl('cc3')">▾ curl equivalent</button>
+      <div class="code-block" id="cc3" style="display:none"># Terminal A — enterprise SSE stream
 curl -k -N -H "Authorization: Bearer $TOKEN_ENT" \
   "https://localhost:7143/results/q-ent-1"
 
@@ -569,10 +545,10 @@ curl -k -X POST https://localhost:7143/queries \
     </div>
   </div>
 
-  <!-- ── STEP 5 ── -->
-  <div class="step" id="s5">
-    <div class="step-hdr" onclick="toggleStep('s5')">
-      <div class="step-num">5</div>
+  <!-- ── STEP 4 ── -->
+  <div class="step" id="s4">
+    <div class="step-hdr" onclick="toggleStep('s4')">
+      <div class="step-num">4</div>
       <div class="step-info">
         <div class="step-title">Cross-Tier Isolation</div>
         <div class="step-desc">Standard stream stays silent when enterprise query result arrives — sse-kafka tier filter blocks delivery</div>
@@ -618,8 +594,8 @@ curl -k -X POST https://localhost:7143/queries \
           </div>
         </div>
       </div>
-      <button class="curl-toggle" onclick="toggleEl('cc5')">▾ curl equivalent</button>
-      <div class="code-block" id="cc5" style="display:none"># Use a fresh query ID each run to avoid replaying a cached Kafka result
+      <button class="curl-toggle" onclick="toggleEl('cc4')">▾ curl equivalent</button>
+      <div class="code-block" id="cc4" style="display:none"># Use a fresh query ID each run to avoid replaying a cached Kafka result
 CROSS_QID="q-cross-$(date +%s | head -c8)"
 
 # Terminal A — standard stream (stays silent)
@@ -637,6 +613,135 @@ curl -k -X POST https://localhost:7143/queries \
 curl -k -N -H "Authorization: Bearer $TOKEN_ENT" \
   "https://localhost:7143/results/$CROSS_QID"
 # Terminal A stays silent — sse-kafka tier filter blocked delivery</div>
+    </div>
+  </div>
+
+  <!-- ── STEP 5 ── -->
+  <div class="step" id="s5">
+    <div class="step-hdr" onclick="toggleStep('s5')">
+      <div class="step-num">5</div>
+      <div class="step-info">
+        <div class="step-title">Schema Validation — Shift Left</div>
+        <div class="step-desc">Send a malformed chunk missing chunk_index — Zilla rejects 400 before Kafka is touched</div>
+      </div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="step-body">
+      <div class="alert">The payload below is missing required field <code>chunk_index</code>. Zilla's inline JSON schema validation returns <strong>HTTP 400</strong>. The message never reaches Kafka — embedder logs stay silent.</div>
+      <div class="code-block" style="margin-bottom:12px">{"doc_id": "test", "text": "missing chunk_index field"}</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-red" onclick="sendBadChunk()">Send Invalid Request</button>
+        <span id="s5-stat"></span>
+      </div>
+      <button class="curl-toggle" onclick="toggleEl('cc5')">▾ curl equivalent</button>
+      <div class="code-block" id="cc5" style="display:none">curl -k -s -o /dev/null -w "%{http_code}" \
+  -X POST https://localhost:7143/chunks \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN_STD" \
+  -H "Idempotency-Key: chunk-bad" \
+  -d '{"doc_id":"test","text":"missing chunk_index field"}'
+# → 400  (embedder logs stay silent — never entered Kafka)</div>
+      <div class="rlog" id="log5" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="section-label" style="margin-top:28px">Why Kafka?</div>
+
+  <!-- ── STEP 6 ── -->
+  <div class="step" id="s6">
+    <div class="step-hdr" onclick="toggleStep('s6')">
+      <div class="step-num">6</div>
+      <div class="step-info">
+        <div class="step-title">Durability — Late Subscriber</div>
+        <div class="step-desc">Submit a query with no stream open. Connect after the answer is ready. Kafka persists the result — you never miss it.</div>
+      </div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="step-body">
+      <div class="alert">With plain HTTP streaming you must be connected <em>before</em> the answer is produced or it is gone. Kafka retains the result message — reconnect a minute later, reload the page, recover from a network blip — the answer is still there.</div>
+      <div class="sse-grid">
+        <div>
+          <div class="qlabel" style="margin-bottom:8px">Step A — Submit query (no stream open yet)</div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+            <button class="btn btn-blue" id="btn-late-submit" onclick="lateSubmit()">Submit Query</button>
+            <span id="late-submit-stat"></span>
+          </div>
+          <div id="late-submit-info" style="display:none">
+            <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Query ID: <code id="late-qid-display" style="color:var(--blue)"></code></div>
+            <div class="alert" style="background:rgba(16,185,129,.07);border-color:rgba(16,185,129,.2);color:#6ee7b7;margin-top:8px">
+              Result is in Kafka. You can wait, reload, or connect the stream at any time below.
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="qlabel" style="margin-bottom:8px">Step B — Connect stream <em>after</em> result is ready</div>
+          <div class="sse-panel">
+            <div class="sse-ph">
+              <span class="sse-ph-title">Late <span class="h-blue">STANDARD</span> stream</span>
+              <div class="sse-status"><div class="dot" id="d-late"></div><span id="ss-late" style="font-size:9px">Disconnected</span></div>
+            </div>
+            <div class="sse-out" id="so-late"><div class="sse-placeholder">Connect after submitting to see Kafka durability</div></div>
+            <div class="sse-footer">
+              <button class="btn btn-ghost btn-sm" id="bc-late" onclick="lateConnect()">Connect Stream</button>
+              <button class="btn btn-ghost btn-sm" id="bx-late" style="display:none" onclick="closeSSE('late')">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="curl-toggle" onclick="toggleEl('cc6')">▾ curl equivalent</button>
+      <div class="code-block" id="cc6" style="display:none">LATE_QID="q-late-$(date +%s | head -c8)"
+
+# Step A — submit query, no stream open
+curl -k -X POST https://localhost:7143/queries \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN_STD" \
+  -H "Idempotency-Key: $LATE_QID" \
+  -d "{\"query_id\":\"$LATE_QID\",\"question\":\"How many days of paid leave do employees get?\"}"
+# → 204  (result will land in rag.results topic)
+
+# Wait 10–30 seconds for the RAG chain to finish, then connect:
+curl -k -N "https://localhost:7143/results/$LATE_QID?access_token=$TOKEN_STD"
+# → result delivered immediately from Kafka — no matter how long you waited</div>
+      <div class="rlog" id="log6" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- ── STEP 7 ── -->
+  <div class="step" id="s7">
+    <div class="step-hdr" onclick="toggleStep('s7')">
+      <div class="step-num">7</div>
+      <div class="step-info">
+        <div class="step-title">Backpressure — Burst Absorption</div>
+        <div class="step-desc">Fire 5 queries at once. All return 204 instantly. Kafka queues them — the RAG chain processes at its own pace.</div>
+      </div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="step-body">
+      <div class="alert">Synchronous HTTP blocks the caller until the LLM responds — under burst load you queue, time out, or drop requests. Kafka absorbs the burst immediately. Every query gets <code>204</code> in milliseconds regardless of how busy the RAG chain is.</div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <button class="btn btn-blue" id="btn-burst" onclick="sendBurst()">Fire 5 Queries</button>
+        <span id="burst-progress" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <div id="burst-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px"></div>
+      <div id="burst-streams" style="display:none">
+        <div class="qlabel" style="margin-bottom:10px">SSE streams — results arriving as the RAG chain works through the queue</div>
+        <div id="burst-panels" style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+        </div>
+      </div>
+      <button class="curl-toggle" onclick="toggleEl('cc7')">▾ curl equivalent</button>
+      <div class="code-block" id="cc7" style="display:none"># Fire 5 queries simultaneously — all return 204 immediately
+for i in 1 2 3 4 5; do
+  QID="q-burst-$i-$(date +%s)"
+  curl -k -s -o /dev/null -w "query $i → %{http_code}\n" \
+    -X POST https://localhost:7143/queries \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN_STD" \
+    -H "Idempotency-Key: $QID" \
+    -d "{\"query_id\":\"$QID\",\"question\":\"How many days of paid leave do employees get?\"}" &
+done
+wait
+# All 5 → 204 instantly. RAG chain processes sequentially from Kafka.</div>
+      <div class="rlog" id="log7" style="display:none"></div>
     </div>
   </div>
 
@@ -851,12 +956,12 @@ async function sendBadChunk(){
   btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
     const r=await post('/chunks',{doc_id:'test',text:'missing chunk_index field'},T.standard,'chunk-bad');
-    setStat('s2-stat',r.status,r.status===400?'rejected at gateway — never entered Kafka ✓':'unexpected');
-    log('log2',r.status===400?'ok':'err',`HTTP ${r.status}`);
+    setStat('s5-stat',r.status,r.status===400?'rejected at gateway — never entered Kafka ✓':'unexpected');
+    log('log5',r.status===400?'ok':'err',`HTTP ${r.status}`);
     btn.disabled=false;btn.textContent='Retry';
-    if(r.status===400) markDone('s2');
+    if(r.status===400) markDone('s5');
   }catch(e){
-    log('log2','err',e.message);btn.disabled=false;btn.textContent='Retry';
+    log('log5','err',e.message);btn.disabled=false;btn.textContent='Retry';
   }
 }
 
@@ -923,8 +1028,8 @@ function connectSSE(key,qid,tier,expectedQid){
     }
 
     if(n===1){
-      if(key==='std') markDone('s3');
-      if(key==='ent') markDone('s4');
+      if(key==='std') markDone('s2');
+      if(key==='ent') markDone('s3');
       if(key==='xent'){
         const stdOut=document.getElementById('so-xstd');
         if(stdOut&&!stdOut.querySelector('.sse-answer')){
@@ -932,7 +1037,7 @@ function connectSSE(key,qid,tier,expectedQid){
           const d=document.getElementById('d-xstd'); if(d)d.className='dot silent';
           const s=document.getElementById('ss-xstd'); if(s)s.textContent='Silent (isolated)';
         }
-        markDone('s5');
+        markDone('s4');
       }
     }
     // Connection stays open — user must click Disconnect to close
@@ -990,6 +1095,110 @@ async function submitCrossQuery(){
   }
 }
 
+
+// ── Step 6 late subscriber ────────────────────────────────────────────────────
+let lateQid = null;
+
+async function lateSubmit(){
+  if(!T.standard){alert('Tokens not ready');return;}
+  lateQid = 'q-late-'+Date.now().toString(36);
+  const btn=document.getElementById('btn-late-submit');
+  const statEl=document.getElementById('late-submit-stat');
+  btn.disabled=true; btn.innerHTML='<span class="spin"></span>';
+  try{
+    const r=await post('/queries',{query_id:lateQid,question:'How many days of paid leave do employees get?'},T.standard,lateQid);
+    statEl.innerHTML=`<span class="stat ${r.status===204?'s-ok':'s-err'}">${r.status}</span>`;
+    if(r.status===204){
+      document.getElementById('late-qid-display').textContent=lateQid;
+      document.getElementById('late-submit-info').style.display='block';
+      log('log6','ok',`Query ${lateQid} submitted — result will land in Kafka`);
+      log('log6','info','Connect the stream below at any time to retrieve it');
+    }
+    btn.disabled=false; btn.textContent='Resubmit';
+  }catch(e){
+    statEl.innerHTML=`<span style="color:var(--red);font-size:11px">${h(e.message)}</span>`;
+    btn.disabled=false; btn.textContent='Retry';
+  }
+}
+
+function lateConnect(){
+  if(!lateQid){
+    alert('Submit a query first (Step A)');return;
+  }
+  connectSSE('late', lateQid, 'standard', lateQid);
+  document.getElementById('bc-late').style.display='none';
+  document.getElementById('bx-late').style.display='';
+  if(document.querySelector('#s6 .step-num')) markDone('s6');
+}
+
+// ── Step 7 burst absorption ───────────────────────────────────────────────────
+let burstQids = [];
+
+async function sendBurst(){
+  if(!T.standard){alert('Tokens not ready');return;}
+  const btn=document.getElementById('btn-burst');
+  const prog=document.getElementById('burst-progress');
+  const list=document.getElementById('burst-list');
+  btn.disabled=true;
+  burstQids=[];
+  list.innerHTML='';
+
+  const questions=[
+    'How many days of paid leave do employees get?',
+    'When was the company founded?',
+    'How many countries does the company operate in?',
+    'How far in advance must leave be requested?',
+    'How many employees does the company have?',
+  ];
+
+  prog.textContent='Firing 5 queries…';
+  const promises=questions.map(async(q,i)=>{
+    const qid='q-burst-'+Date.now().toString(36)+'-'+i;
+    burstQids[i]=qid;
+    const row=document.createElement('div');
+    row.id='burst-row-'+i;
+    row.style.cssText='display:flex;align-items:center;gap:10px;background:var(--code);border:1px solid var(--border);border-radius:var(--rs);padding:10px 14px;font-size:12px';
+    row.innerHTML=`<span style="color:var(--text3);flex-shrink:0">Q${i+1}</span><span style="flex:1;color:var(--text2)">${h(q)}</span><span id="br-stat-${i}"><span class="spin"></span></span><span style="font-size:10px;color:var(--text3)" id="br-ms-${i}"></span>`;
+    list.appendChild(row);
+    const t0=Date.now();
+    try{
+      const r=await post('/queries',{query_id:qid,question:q},T.standard,qid);
+      const ms=Date.now()-t0;
+      document.getElementById('br-stat-'+i).innerHTML=`<span class="stat s-ok">${r.status}</span>`;
+      document.getElementById('br-ms-'+i).textContent=`${ms}ms`;
+    }catch(e){
+      document.getElementById('br-stat-'+i).innerHTML=`<span class="stat s-err">ERR</span>`;
+    }
+  });
+
+  await Promise.all(promises);
+  prog.innerHTML='<span style="color:var(--green)">All 5 accepted instantly — queued in Kafka</span>';
+  markDone('s7');
+
+  // build SSE panels
+  const streamsEl=document.getElementById('burst-streams');
+  const panelsEl=document.getElementById('burst-panels');
+  streamsEl.style.display='block';
+  panelsEl.innerHTML='';
+  burstQids.forEach((qid,i)=>{
+    const key='burst'+i;
+    const panel=document.createElement('div');
+    panel.className='sse-panel';
+    panel.innerHTML=`
+      <div class="sse-ph" style="padding:8px 12px">
+        <span class="sse-ph-title" style="font-size:10px">Q${i+1}</span>
+        <div class="sse-status"><div class="dot" id="d-${key}"></div></div>
+      </div>
+      <div class="sse-out" id="so-${key}" style="min-height:80px;font-size:11px"><div class="sse-placeholder" style="font-size:10px">Waiting…</div></div>
+      <div class="sse-footer" style="padding:0 10px 10px">
+        <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:3px 8px" onclick="connectSSE('${key}','${qid}','standard','${qid}');this.style.display='none'">Connect</button>
+      </div>`;
+    panelsEl.appendChild(panel);
+  });
+  btn.disabled=false; btn.textContent='Fire Again';
+  log('log7','ok','5 queries accepted in parallel — all 204. Kafka absorbed the burst.');
+  log('log7','info','Connect individual streams above to watch results arrive as the RAG chain processes the queue');
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 (function(){
