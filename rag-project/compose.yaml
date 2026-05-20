@@ -1,0 +1,931 @@
+name: rag-env
+services:
+  gateway:
+    image: ghcr.io/aklivity/zilla-platform/gateway:${ZILLA_PLATFORM_VERSION:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    hostname: gateway.env.data.plane.net
+    configs:
+      - source: zilla.yaml
+        target: /etc/zilla/zilla.yaml
+        mode: 0666
+    volumes:
+      - gateway-data:/var/run/zilla
+      - gateway-tls:/etc/zilla/tls:ro
+      - bootstrap-data:/run/secrets/platform:ro
+      - ./tls:/etc/zilla/localhost:ro
+    ports:
+      - 4444:4444
+      - 7143:7143
+      - 9094:9094
+      - 8082:8082
+    environment:
+      JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:4444"
+      ZILLA_PLATFORM_LICENSE_KEY: ${ZILLA_PLATFORM_LICENSE_KEY}
+      ZILLA_PLATFORM_BOOTSTRAP_TOKEN_FILE: /run/secrets/platform/bootstrap-token
+      KAFKA_SASL_USERNAME: "admin"
+      KAFKA_SASL_PASSWORD: "admin-secret"
+    command: bootstrap -v -e -l -w 1 --platform http://zilla.platform.net:8081/ -Pzilla.binding.socks.debug=true
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      gateway-init:
+        condition: service_completed_successfully
+    networks:
+      bootstrap-plane:
+      data-plane:
+        aliases:
+          - rag-api-v1.staging.platform.net
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '2'
+          memory: 1G
+
+  kafka:
+    image: bitnamilegacy/kafka:3.5
+    restart: unless-stopped
+    hostname: kafka.env.data.plane.net
+    expose:
+      - 9092
+    healthcheck:
+      test: /opt/bitnami/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server kafka.env.data.plane.net:29092 || exit 1
+      interval: 1s
+      timeout: 60s
+      retries: 60
+    environment:
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_BROKER_ID: "1"
+      KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@127.0.0.1:9093"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LOG_DIRS: "/tmp/logs"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_LISTENERS: "CLIENT://:9092,INTERNAL://:29092,CONTROLLER://:9093"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "CLIENT://kafka.env.data.plane.net:9092,INTERNAL://kafka.env.data.plane.net:29092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CFG_AUTHORIZER_CLASS_NAME: "org.apache.kafka.metadata.authorizer.StandardAuthorizer"
+      KAFKA_CFG_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_CFG_SUPER_USERS: "User:${KAFKA_SASL_USER:-admin};User:${KAFKA_PLAIN_BROKER_USER:-broker};User:ANONYMOUS"
+      KAFKA_CFG_SASL_ENABLED_MECHANISMS: "PLAIN,SCRAM-SHA-256,SCRAM-SHA-512"
+      KAFKA_CLIENT_LISTENER_NAME: "CLIENT"
+      KAFKA_CLIENT_USERS: "${KAFKA_SASL_USER:-admin},${KAFKA_PRODUCER_USER:-producer-app},${KAFKA_CONSUMER_USER:-consumer-app}"
+      KAFKA_CLIENT_PASSWORDS: "${KAFKA_SASL_PASSWORD:-admin-secret},${KAFKA_PRODUCER_PASSWORD:-producer-secret},${KAFKA_CONSUMER_PASSWORD:-consumer-secret}"
+      KAFKA_CFG_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${KAFKA_PLAIN_BROKER_USER:-broker}"
+        password="${KAFKA_PLAIN_BROKER_PASSWORD:-broker-secret}"
+        user_${KAFKA_SASL_USER:-admin}="${KAFKA_SASL_PASSWORD:-admin-secret}"
+        user_${KAFKA_PRODUCER_USER:-producer-app}="${KAFKA_PRODUCER_PASSWORD:-producer-secret}"
+        user_${KAFKA_CONSUMER_USER:-consumer-app}="${KAFKA_CONSUMER_PASSWORD:-consumer-secret}";
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - data-plane
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.1.0
+    restart: unless-stopped
+    hostname: schema-registry.env.data.plane.net
+    container_name: schema-registry
+    depends_on:
+      - kafka
+    expose:
+      - 8081
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry.env.data.plane.net
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka.env.data.plane.net:29092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: schema-registry
+      SCHEMA_REGISTRY_MASTER_ELIGIBILITY: "true"
+      SCHEMA_REGISTRY_COMPATIBILITY_LEVEL: FULL
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
+    networks:
+      - data-plane
+
+  kafka-init:
+    image: bitnamilegacy/kafka:3.5
+    hostname: kafka-init.env.data.plane.net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+    networks:
+      - data-plane
+    volumes:
+      - gateway-tls:/etc/tls:ro
+    environment:
+      ZILLA_PLATFORM_ACCESS_KEY: ${ZILLA_PLATFORM_ACCESS_KEY:-}
+      ZILLA_PLATFORM_SECRET_KEY: ${ZILLA_PLATFORM_SECRET_KEY:-}
+      ZILLA_PLATFORM_SERVER_VALUE: ${ZILLA_PLATFORM_SERVER_VALUE:-}
+      ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER: ${ZILLA_PLATFORM_KAFKA_BOOTSTRAP_SERVER:-}
+      ZILLA_PLATFORM_SCHEMA_REGISTRY_URL: ${ZILLA_PLATFORM_SCHEMA_REGISTRY_URL:-}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "Waiting for Kafka to be ready..."
+        sleep 5
+
+        echo "Waiting for Schema Registry to be ready..."
+        until curl -sf http://schema-registry.env.data.plane.net:8081/subjects > /dev/null 2>&1; do
+          echo "Waiting for schema registry..."
+          sleep 2
+        done
+
+        # ── RAG topics ──────────────────────────────────────────────────────
+        echo "Creating topic: rag.chunks..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --create --if-not-exists \
+          --topic rag.chunks \
+          --partitions 4 \
+          --replication-factor 1 \
+          --config retention.ms=604800000 \
+          --config cleanup.policy=delete
+
+        echo "Creating topic: rag.queries..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --create --if-not-exists \
+          --topic rag.queries \
+          --partitions 4 \
+          --replication-factor 1 \
+          --config retention.ms=86400000 \
+          --config cleanup.policy=delete
+
+        echo "Creating topic: rag.results..."
+        /opt/bitnami/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --create --if-not-exists \
+          --topic rag.results \
+          --partitions 4 \
+          --replication-factor 1 \
+          --config retention.ms=86400000 \
+          --config cleanup.policy=delete
+
+        # ── RAG schemas ─────────────────────────────────────────────────────
+        echo "Registering JSON schema for rag.chunks-value..."
+        curl -sS -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+          --data '{
+            "schemaType": "JSON",
+            "schema": "{\"type\":\"object\",\"required\":[\"doc_id\",\"chunk_index\",\"text\"],\"properties\":{\"doc_id\":{\"type\":\"string\"},\"chunk_index\":{\"type\":\"integer\"},\"text\":{\"type\":\"string\",\"maxLength\":4096},\"source_url\":{\"type\":\"string\"},\"visibility\":{\"type\":\"string\",\"enum\":[\"public\",\"internal\",\"confidential\"],\"default\":\"internal\"},\"metadata\":{\"type\":\"object\"}}}"
+          }' \
+          http://schema-registry.env.data.plane.net:8081/subjects/rag.chunks-value/versions
+
+        echo "Registering JSON schema for rag.queries-value..."
+        curl -sS -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+          --data '{
+            "schemaType": "JSON",
+            "schema": "{\"type\":\"object\",\"required\":[\"question\"],\"properties\":{\"query_id\":{\"type\":\"string\"},\"question\":{\"type\":\"string\",\"maxLength\":2048},\"top_k\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":20}}}"
+          }' \
+          http://schema-registry.env.data.plane.net:8081/subjects/rag.queries-value/versions
+
+        # ── Quotas ──────────────────────────────────────────────────────────
+        echo "Creating client quotas..."
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config consumer_byte_rate=4194304 \
+          --entity-type clients \
+          --entity-name embedder-service
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config producer_byte_rate=1048576,consumer_byte_rate=1048576 \
+          --entity-type clients \
+          --entity-name rag-chain-service
+        /opt/bitnami/kafka/bin/kafka-configs.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --alter \
+          --add-config producer_byte_rate=65536,consumer_byte_rate=65536 \
+          --entity-type clients \
+          --entity-default
+
+        # ── ACLs ────────────────────────────────────────────────────────────
+        echo "Seeding Kafka ACLs..."
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add --allow-principal "User:admin" \
+          --operation ALL --cluster
+
+        # Gateway (admin) — full access to all three RAG topics
+        for topic in rag.chunks rag.queries rag.results; do
+          /opt/bitnami/kafka/bin/kafka-acls.sh \
+            --bootstrap-server kafka.env.data.plane.net:29092 \
+            --add --allow-principal "User:admin" \
+            --operation READ --operation WRITE --operation DESCRIBE \
+            --topic $$topic
+        done
+
+        # producer-app — reads rag.chunks (embedder consumer group)
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add --allow-principal "User:producer-app" \
+          --operation READ --operation DESCRIBE \
+          --topic rag.chunks
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add --allow-principal "User:producer-app" \
+          --operation READ --group "embedder-service"
+
+        # consumer-app — reads rag.queries, writes rag.results (RAG chain)
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add --allow-principal "User:consumer-app" \
+          --operation READ --operation DESCRIBE \
+          --topic rag.queries
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add --allow-principal "User:consumer-app" \
+          --operation READ --group "rag-chain-service"
+        /opt/bitnami/kafka/bin/kafka-acls.sh \
+          --bootstrap-server kafka.env.data.plane.net:29092 \
+          --add --allow-principal "User:consumer-app" \
+          --operation WRITE --operation DESCRIBE \
+          --topic rag.results
+
+        echo ""
+        echo "✓ Kafka initialization complete!"
+        echo "  Topic: rag.chunks   (4 partitions) - JSON schema"
+        echo "  Topic: rag.queries  (4 partitions) - JSON schema"
+        echo "  Topic: rag.results  (4 partitions)"
+        echo "  Quota: embedder-service    4 MB/s consume"
+        echo "  Quota: rag-chain-service   1 MB/s produce + consume"
+        echo "  Quota: default             64 KB/s"
+
+  gateway-init:
+    image: eclipse-temurin:17-jdk
+    volumes:
+      - gateway-tls:/etc/zilla/tls:rw
+    configs:
+      - source: tls.init.sh
+        target: /tmp/tls.init.sh
+        mode: 0555
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        exec /tmp/tls.init.sh
+    working_dir: /etc/zilla
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    restart: unless-stopped
+    hostname: qdrant.env.data.plane.net
+    expose:
+      - 6333
+      - 6334
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      - data-plane
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  embedder:
+    image: python:3.12-slim
+    restart: unless-stopped
+    hostname: embedder.env.data.plane.net
+    configs:
+      - source: embedder.py
+        target: /app/embedder_service.py
+        mode: 0555
+    command:
+      - /bin/bash
+      - -c
+      - |
+        pip install --quiet confluent-kafka==2.6.1 openai==1.57.0 qdrant-client==1.12.1
+        python /app/embedder_service.py
+    environment:
+      KAFKA_BOOTSTRAP:     kafka.env.data.plane.net:9092
+      KAFKA_SASL_USERNAME: ${KAFKA_PRODUCER_USER:-producer-app}
+      KAFKA_SASL_PASSWORD: ${KAFKA_PRODUCER_PASSWORD:-producer-secret}
+      KAFKA_GROUP_ID:      embedder-service
+      KAFKA_TOPIC_CHUNKS:  rag.chunks
+      KAFKA_AUTO_OFFSET:   earliest
+      OPENAI_API_KEY:      ${OPENAI_API_KEY}
+      EMBEDDING_MODEL:     text-embedding-3-small
+      EMBEDDING_DIMS:      "1536"
+      QDRANT_URL:          http://qdrant.env.data.plane.net:6333
+      QDRANT_COLLECTION:   rag_chunks
+      EMBED_BATCH_SIZE:    "16"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    networks:
+      - data-plane
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  rag-chain:
+    image: python:3.12-slim
+    restart: unless-stopped
+    hostname: rag-chain.env.data.plane.net
+    configs:
+      - source: rag_chain.py
+        target: /app/rag_chain_service.py
+        mode: 0555
+    command:
+      - /bin/bash
+      - -c
+      - |
+        pip install --quiet confluent-kafka==2.6.1 openai==1.57.0 qdrant-client==1.12.1
+        python /app/rag_chain_service.py
+    environment:
+      KAFKA_BOOTSTRAP:      kafka.env.data.plane.net:9092
+      KAFKA_SASL_USERNAME:  ${KAFKA_CONSUMER_USER:-consumer-app}
+      KAFKA_SASL_PASSWORD:  ${KAFKA_CONSUMER_PASSWORD:-consumer-secret}
+      KAFKA_GROUP_ID:       rag-chain-service
+      KAFKA_TOPIC_QUERIES:  rag.queries
+      KAFKA_TOPIC_RESULTS:  rag.results
+      KAFKA_AUTO_OFFSET:    earliest
+      OPENAI_API_KEY:       ${OPENAI_API_KEY}
+      EMBEDDING_MODEL:      text-embedding-3-small
+      LLM_MODEL:            ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TEMPERATURE:      "0.2"
+      LLM_MAX_TOKENS:       "1024"
+      QDRANT_URL:           http://qdrant.env.data.plane.net:6333
+      QDRANT_COLLECTION:    rag_chunks
+      DEFAULT_TOP_K:        "5"
+      SCORE_THRESHOLD:      "0.35"
+      WORKER_THREADS:       "4"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    networks:
+      - data-plane
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+networks:
+  data-plane:
+  bootstrap-plane:
+    name: quickstart_bootstrap-plane
+    external: true
+
+volumes:
+  gateway-data:
+  gateway-tls:
+  bootstrap-data:
+    name: quickstart_bootstrap-data
+    external: true
+  qdrant-data:
+
+configs:
+
+  zilla.yaml:
+    content: |
+      name: "gateway"
+      vaults:
+        server:
+          type: "filesystem"
+          options:
+            keys:
+              store: "tls/server/keys"
+              password: "generated"
+        client:
+          type: "filesystem"
+          options:
+            trust:
+              store: "tls/client/trust"
+              type: "pkcs12"
+              password: "generated"
+        localhost_server:
+          type: "filesystem"
+          options:
+            keys:
+              store: "localhost/localhost.p12"
+              type: "pkcs12"
+              password: "generated"
+      guards:
+        authn_jwt:
+          type: jwt
+          options:
+            issuer: "https://auth.example.com"
+            audience: "https://api.example.com"
+            keys:
+              - kty: "RSA"
+                n: "qqEu50hX+43Bx4W1UYWnAVKwFm+vDbP0kuIOSLVNa+HKQdHTf+3Sei5UCnkskn796izA29D0DdCy3ET9oaKRHIJyKbqFl0rv6f516QzOoXKC6N01sXBHBE/ovs0wwDvlaW+gFGPgkzdcfUlyrWLDnLV7LcuQymhTND2uH0oR3wJnNENN/OFgM1KGPPDOe19YsIKdLqARgxrhZVsh06OurEviZTXOBFI5r+yac7haDwOQhLHXNv+Y9MNvxs5QLWPFIM3bNUWfYrJnLrs4hGJS+y/KDM9Si+HL30QAFXy4YNO33J8DHjZ7ddG5n8/FqplOKvRtUgjcKWlxoGY4VdVaDQ=="
+                e: "AQAB"
+                alg: "RS256"
+                kid: "example"
+              - kty: "EC"
+                crv: "P-256"
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU"
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+                alg: "ES256"
+                kid: "example_ec"
+            identity: "roles"
+            challenge: 10
+      catalogs:
+        rag_schemas:
+          type: inline
+          options:
+            subjects:
+              chunk_schema:
+                schema: |
+                  {
+                    "type": "object",
+                    "required": ["doc_id", "chunk_index", "text"],
+                    "properties": {
+                      "doc_id":       { "type": "string" },
+                      "chunk_index":  { "type": "integer" },
+                      "text":         { "type": "string", "maxLength": 4096 },
+                      "source_url":   { "type": "string" },
+                      "visibility": {
+                        "type": "string",
+                        "enum": ["public", "internal", "confidential"],
+                        "default": "internal"
+                      },
+                      "metadata": { "type": "object" }
+                    }
+                  }
+              query_schema:
+                schema: |
+                  {
+                    "type": "object",
+                    "required": ["question"],
+                    "properties": {
+                      "query_id":  { "type": "string" },
+                      "question":  { "type": "string", "maxLength": 2048 },
+                      "top_k":      { "type": "integer", "minimum": 1, "maximum": 20 },
+                      "user_tier":  { "type": "string", "enum": ["free", "standard", "enterprise"] },
+                      "user_id":    { "type": "string" }
+                    }
+                  }
+      bindings:
+        tcp_server:
+          type: tcp
+          kind: server
+          options:
+            host: 0.0.0.0
+            port:
+              - 7143
+          routes:
+            - when:
+                - port: 7143
+              exit: tls_server
+        tls_server:
+          type: tls
+          kind: server
+          vault: localhost_server
+          options:
+            keys:
+              - localhost
+            sni:
+              - localhost
+            alpn:
+              - h2
+          exit: http_server
+        http_server:
+          type: http
+          kind: server
+          options:
+            versions:
+              - h2
+            authorization:
+              authn_jwt:
+                credentials:
+                  headers:
+                    authorization: Bearer {credentials}
+                  query:
+                    access_token: "{credentials}"
+            access-control:
+              policy: cross-origin
+          routes:
+            # GET → sse_server (handles text/event-stream natively)
+            - when:
+                - headers:
+                    :method: GET
+              exit: sse_server
+            # POST → http-kafka produce
+            - guarded:
+                authn_jwt:
+                  - proxy:publish
+              when:
+                - headers:
+                    :method: POST
+              exit: http_kafka_mapping
+        # SSE server — handles text/event-stream content type
+        sse_server:
+          type: sse
+          kind: server
+          routes:
+            - guarded:
+                authn_jwt:
+                  - proxy:stream
+              exit: sse_kafka_mapping
+        # SSE-Kafka mapping — key-filtered fanout to SSE clients
+        # sse-kafka natively supports text/event-stream and filters by path param
+        sse_kafka_mapping:
+          type: sse-kafka
+          kind: proxy
+          routes:
+            - when:
+                - path: /results/{queryId}
+              exit: kafka_cache_client
+              with:
+                topic: rag.results
+                filters:
+                  - key: $${params.queryId}
+                    headers:
+                      tier: "$${guarded['authn_jwt'].identity}"
+        http_kafka_mapping:
+          type: http-kafka
+          kind: proxy
+          routes:
+            # Ingest document chunk → rag.chunks
+            # key = Idempotency-Key header (deduplication)
+            - when:
+                - method: POST
+                  path: /chunks
+              exit: kafka_cache_client
+              with:
+                capability: produce
+                topic: rag.chunks
+                key: "$${idempotencyKey}"
+            # Submit query → rag.queries
+            # key = Idempotency-Key header (used as query_id for result correlation)
+            - when:
+                - method: POST
+                  path: /queries
+              exit: kafka_cache_client
+              with:
+                capability: produce
+                topic: rag.queries
+                key: "$${idempotencyKey}"
+                overrides:
+                  user-tier: "$${guarded['authn_jwt'].identity}"
+        kafka_cache_client:
+          type: kafka
+          kind: cache_client
+          options:
+            topics:
+              - name: rag.chunks
+                value:
+                  model: json
+                  catalog:
+                    rag_schemas:
+                      - subject: chunk_schema
+              - name: rag.queries
+                value:
+                  model: json
+                  catalog:
+                    rag_schemas:
+                      - subject: query_schema
+          exit: kafka_cache_server
+        kafka_cache_server:
+          type: kafka
+          kind: cache_server
+          options:
+            bootstrap:
+              - rag.chunks
+              - rag.queries
+              - rag.results
+          exit: kafka_client
+        kafka_client:
+          type: kafka
+          kind: client
+          options:
+            servers:
+              - kafka.env.data.plane.net:9092
+            sasl:
+              mechanism: "scram-sha-512"
+              username: "$${{env.KAFKA_SASL_USERNAME}}"
+              password: "$${{env.KAFKA_SASL_PASSWORD}}"
+          exit: south_tcp_client
+        south_tcp_client:
+          type: tcp
+          kind: client
+
+  tls.init.sh:
+    content: |
+      #!/bin/bash
+      set -ex
+
+      SERVER_CA_ALIAS=serverca
+      SERVER_CA_PASS=generated
+      SERVER_CERT_ALIAS=staging.platform.net
+      SERVER_CERT_PASS=generated
+      SERVER_KEY_PASS=generated
+      SERVER_CERT_SAN=dns:*.staging.platform.net
+      CLIENT_TRUST_PASS=generated
+
+      mkdir -p tls/server tls/client
+
+      if [ ! -f tls/server/signers ]; then
+        echo 'Generating Certificate Authority...'
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" -keypass "$$SERVER_CA_PASS" \
+          -genkeypair \
+          -alias "$$SERVER_CA_ALIAS" \
+          -dname "C=US, ST=California, O=Aklivity, OU=Development, CN=$$SERVER_CA_ALIAS" \
+          -validity 3650 -keyalg RSA -ext bc:c
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" \
+          -exportcert -alias "$$SERVER_CA_ALIAS" -rfc > tls/server/$$SERVER_CA_ALIAS.crt
+      fi
+
+      if [ ! -f tls/server/keys ]; then
+        echo 'Generating server keypair and CSR...'
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -genkeypair \
+          -alias "$$SERVER_CERT_ALIAS" \
+          -dname "C=US, ST=California, O=Aklivity, OU=Development, CN=$$SERVER_CERT_ALIAS" \
+          -validity 3650 -keyalg RSA
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -alias "$$SERVER_CERT_ALIAS" \
+          -certreq -rfc > tls/server/$$SERVER_CERT_ALIAS.csr
+      fi
+
+      if [ ! -f tls/server/$$SERVER_CERT_ALIAS.crt ]; then
+        echo 'Signing server certificate...'
+        keytool -keystore tls/server/signers -storepass "$$SERVER_CA_PASS" -keypass "$$SERVER_CA_PASS" \
+          -gencert -alias "$$SERVER_CA_ALIAS" \
+          -ext ku:c=dig,keyenc -ext SAN="$$SERVER_CERT_SAN" \
+          -validity 1800 -rfc < tls/server/$$SERVER_CERT_ALIAS.csr > tls/server/$$SERVER_CERT_ALIAS.crt
+        echo 'Importing certificate chain...'
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -importcert -alias "$$SERVER_CA_ALIAS" -rfc -noprompt < tls/server/$$SERVER_CA_ALIAS.crt
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -importcert -alias "$$SERVER_CERT_ALIAS" -rfc < tls/server/$$SERVER_CERT_ALIAS.crt
+        keytool -keystore tls/server/keys -storepass "$$SERVER_CERT_PASS" -keypass "$$SERVER_CERT_PASS" \
+          -delete -alias "$$SERVER_CA_ALIAS" -noprompt
+      fi
+
+      if [ ! -f tls/client/trust ]; then
+        echo 'Creating client truststore...'
+        keytool -keystore tls/client/trust -storepass "$$CLIENT_TRUST_PASS" -keypass "$$CLIENT_TRUST_PASS" \
+          -importcert -alias "$$SERVER_CA_ALIAS" -rfc -noprompt < tls/server/$$SERVER_CA_ALIAS.crt
+      fi
+
+      if [ ! -f tls/client/trust.jks ]; then
+        echo 'Converting truststore to JKS format...'
+        keytool -importkeystore \
+          -srckeystore tls/client/trust -srcstoretype PKCS12 -srcstorepass "$$CLIENT_TRUST_PASS" \
+          -destkeystore tls/client/trust.jks -deststoretype JKS -deststorepass "$$CLIENT_TRUST_PASS"
+      fi
+
+      if [ ! -f tls/tls.key ]; then
+        echo 'Exporting PEM private key...'
+        openssl pkcs12 -in tls/server/keys -passin pass:"$$SERVER_KEY_PASS" \
+          -nodes -nocerts -out tls/tls.key
+      fi
+
+      if [ ! -f tls/tls.crt ]; then
+        echo 'Exporting PEM certificate...'
+        openssl pkcs12 -in tls/server/keys -passin pass:"$$SERVER_CERT_PASS" \
+          -nokeys -out tls/tls.crt
+      fi
+
+  embedder.py:
+    content: |
+      import json, logging, os, signal, time, uuid
+      from confluent_kafka import Consumer, KafkaError, KafkaException
+      from openai import OpenAI
+      from qdrant_client import QdrantClient
+      from qdrant_client.http.models import Distance, PointStruct, VectorParams
+
+      logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s %(message)s")
+      log = logging.getLogger("embedder")
+
+      KAFKA_BOOTSTRAP    = os.environ["KAFKA_BOOTSTRAP"]
+      KAFKA_SASL_USER    = os.getenv("KAFKA_SASL_USERNAME", "")
+      KAFKA_SASL_PASS    = os.getenv("KAFKA_SASL_PASSWORD", "")
+      KAFKA_GROUP_ID     = os.getenv("KAFKA_GROUP_ID", "embedder-service")
+      KAFKA_TOPIC_CHUNKS = os.getenv("KAFKA_TOPIC_CHUNKS", "rag.chunks")
+      OPENAI_API_KEY     = os.environ["OPENAI_API_KEY"]
+      EMBEDDING_MODEL    = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+      EMBEDDING_DIMS     = int(os.getenv("EMBEDDING_DIMS", "1536"))
+      QDRANT_URL         = os.getenv("QDRANT_URL", "http://localhost:6333")
+      QDRANT_COLLECTION  = os.getenv("QDRANT_COLLECTION", "rag_chunks")
+      BATCH_SIZE         = int(os.getenv("EMBED_BATCH_SIZE", "16"))
+
+      openai_client = OpenAI(api_key=OPENAI_API_KEY)
+      qdrant = QdrantClient(url=QDRANT_URL)
+
+      kafka_cfg = {
+          "bootstrap.servers": KAFKA_BOOTSTRAP,
+          "group.id": KAFKA_GROUP_ID,
+          "auto.offset.reset": os.getenv("KAFKA_AUTO_OFFSET", "earliest"),
+          "enable.auto.commit": False,
+      }
+      if KAFKA_SASL_USER:
+          kafka_cfg.update({"security.protocol":"SASL_PLAINTEXT","sasl.mechanism":"PLAIN",
+                            "sasl.username":KAFKA_SASL_USER,"sasl.password":KAFKA_SASL_PASS})
+      consumer = Consumer(kafka_cfg)
+
+      def ensure_collection():
+          existing = {c.name for c in qdrant.get_collections().collections}
+          if QDRANT_COLLECTION not in existing:
+              qdrant.create_collection(QDRANT_COLLECTION,
+                  vectors_config=VectorParams(size=EMBEDDING_DIMS, distance=Distance.COSINE))
+              log.info("Created Qdrant collection '%s'", QDRANT_COLLECTION)
+
+      def embed(texts):
+          return [i.embedding for i in openai_client.embeddings.create(model=EMBEDDING_MODEL, input=texts).data]
+
+      def upsert(chunks, vectors):
+          points = [PointStruct(
+              id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{c['doc_id']}#{c['chunk_index']}")),
+              vector=v,
+              payload={k: c.get(k,"") for k in ("doc_id","chunk_index","text","source_url","visibility")}
+          ) for c, v in zip(chunks, vectors)]
+          qdrant.upsert(collection_name=QDRANT_COLLECTION, points=points, wait=True)
+          log.info("Upserted %d points", len(points))
+
+      def flush(pending):
+          for attempt in range(3):
+              try:
+                  upsert(pending, embed([c["text"] for c in pending]))
+                  consumer.commit(asynchronous=False)
+                  return
+              except Exception as e:
+                  log.warning("Flush attempt %d failed: %s", attempt+1, e)
+                  time.sleep(2 ** (attempt+1))
+          log.error("Giving up on batch of %d", len(pending))
+
+      running = True
+      def stop(*_): global running; running = False
+      signal.signal(signal.SIGTERM, stop)
+      signal.signal(signal.SIGINT, stop)
+
+      ensure_collection()
+      consumer.subscribe([KAFKA_TOPIC_CHUNKS])
+      log.info("Subscribed to '%s'", KAFKA_TOPIC_CHUNKS)
+      pending = []
+      try:
+          while running:
+              msg = consumer.poll(timeout=1.0)
+              if msg is None:
+                  if pending: flush(pending); pending = []
+                  continue
+              if msg.error():
+                  if msg.error().code() != KafkaError._PARTITION_EOF: raise KafkaException(msg.error())
+                  continue
+              try:
+                  c = json.loads(msg.value()); c.setdefault("visibility","internal"); pending.append(c)
+              except Exception as e:
+                  log.warning("Skipping bad message: %s", e); consumer.commit(message=msg); continue
+              if len(pending) >= BATCH_SIZE: flush(pending); pending = []
+      finally:
+          if pending: flush(pending)
+          consumer.close()
+
+  rag_chain.py:
+    content: |
+      import json, logging, os, signal, time
+      from concurrent.futures import ThreadPoolExecutor, as_completed
+      from confluent_kafka import Consumer, KafkaError, KafkaException, Producer
+      from openai import OpenAI
+      from qdrant_client import QdrantClient
+      from qdrant_client.http.models import Filter, FieldCondition, MatchAny
+
+      logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s %(message)s")
+      log = logging.getLogger("rag-chain")
+
+      KAFKA_BOOTSTRAP   = os.environ["KAFKA_BOOTSTRAP"]
+      KAFKA_SASL_USER   = os.getenv("KAFKA_SASL_USERNAME", "")
+      KAFKA_SASL_PASS   = os.getenv("KAFKA_SASL_PASSWORD", "")
+      TOPIC_QUERIES     = os.getenv("KAFKA_TOPIC_QUERIES", "rag.queries")
+      TOPIC_RESULTS     = os.getenv("KAFKA_TOPIC_RESULTS", "rag.results")
+      OPENAI_API_KEY    = os.environ["OPENAI_API_KEY"]
+      EMBEDDING_MODEL   = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+      LLM_MODEL         = os.getenv("LLM_MODEL", "gpt-4o-mini")
+      LLM_TEMPERATURE   = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+      LLM_MAX_TOKENS    = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+      QDRANT_URL        = os.getenv("QDRANT_URL", "http://localhost:6333")
+      QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "rag_chunks")
+      DEFAULT_TOP_K     = int(os.getenv("DEFAULT_TOP_K", "5"))
+      SCORE_THRESHOLD   = float(os.getenv("SCORE_THRESHOLD", "0.35"))
+      WORKER_THREADS    = int(os.getenv("WORKER_THREADS", "4"))
+
+      ROLE_VIS = {"enterprise":["public","internal","confidential"],"standard":["public","internal"],"free":["public"]}
+      def allowed_vis(roles):
+          s = set()
+          for r in roles: s.update(ROLE_VIS.get(r,["public"]))
+          return list(s) or ["public"]
+
+      def sys_prompt(uid, roles):
+          tier = "enterprise" if "enterprise" in roles else ("standard" if "standard" in roles else "free")
+          base = "Answer using only the provided context. Cite doc_id sources. Be concise."
+          return f"{base}\nAssisting '{uid}' (tier: {tier})." if uid != "anonymous" else base
+
+      openai_client = OpenAI(api_key=OPENAI_API_KEY)
+      qdrant = QdrantClient(url=QDRANT_URL)
+
+      kafka_cfg = {"bootstrap.servers":KAFKA_BOOTSTRAP,"group.id":os.getenv("KAFKA_GROUP_ID","rag-chain-service"),
+                   "auto.offset.reset":os.getenv("KAFKA_AUTO_OFFSET","earliest"),"enable.auto.commit":False}
+      prod_cfg  = {"bootstrap.servers":KAFKA_BOOTSTRAP,"acks":"all","enable.idempotence":True}
+      if KAFKA_SASL_USER:
+          sasl = {"security.protocol":"SASL_PLAINTEXT","sasl.mechanism":"PLAIN",
+                  "sasl.username":KAFKA_SASL_USER,"sasl.password":KAFKA_SASL_PASS}
+          kafka_cfg.update(sasl); prod_cfg.update(sasl)
+      consumer = Consumer(kafka_cfg)
+      producer = Producer(prod_cfg)
+
+      def process(msg):
+          t0 = time.monotonic()
+          payload  = json.loads(msg.value())
+          qid      = payload.get("query_id") or (msg.key().decode() if msg.key() else "unknown")
+          question = payload["question"]
+          top_k    = payload.get("top_k", DEFAULT_TOP_K)
+          # tier comes from the request payload — client includes their JWT roles claim
+          hdrs      = {k: v.decode() for k, v in (msg.headers() or [])}
+          user_tier = hdrs.get("user-tier", "free")
+          uid       = payload.get("user_id", "anonymous")
+          roles     = [user_tier]
+          vis       = allowed_vis(roles)
+          log.info("query_id=%s user=%s roles=%s vis=%s", qid, uid, roles, vis)
+          try:
+              qvec = openai_client.embeddings.create(model=EMBEDDING_MODEL, input=question).data[0].embedding
+              hits = qdrant.search(collection_name=QDRANT_COLLECTION, query_vector=qvec,
+                  query_filter=Filter(must=[FieldCondition(key="visibility",match=MatchAny(any=vis))]),
+                  limit=top_k, score_threshold=SCORE_THRESHOLD, with_payload=True)
+              sources = [{"doc_id":h.payload.get("doc_id",""),"chunk_index":h.payload.get("chunk_index",0),
+                          "source_url":h.payload.get("source_url",""),"score":round(h.score,4)} for h in hits]
+              ctx = "\n\n---\n\n".join(
+                  f"[Source: {h.payload.get('doc_id')}, chunk {h.payload.get('chunk_index')}]\n{h.payload.get('text','')}"
+                  for h in hits) if hits else ""
+              if not ctx:
+                  answer, usage = "No relevant information found for your access level.", {}
+              else:
+                  r = openai_client.chat.completions.create(model=LLM_MODEL, temperature=LLM_TEMPERATURE,
+                      max_tokens=LLM_MAX_TOKENS,
+                      messages=[{"role":"system","content":sys_prompt(uid,roles)},
+                                {"role":"user","content":f"Context:\n{ctx}\n\nQuestion: {question}"}])
+                  answer = r.choices[0].message.content.strip()
+                  usage  = {"prompt_tokens":r.usage.prompt_tokens,"completion_tokens":r.usage.completion_tokens,
+                            "total_tokens":r.usage.total_tokens}
+              ms = int((time.monotonic()-t0)*1000)
+              result = {"query_id":qid,"answer":answer,"sources":sources,"model":LLM_MODEL,"latency_ms":ms,
+                        "user_id":uid,"user_tier":"enterprise" if "enterprise" in roles else ("standard" if "standard" in roles else "free"),
+                        "token_usage":usage}
+          except Exception as e:
+              ms = int((time.monotonic()-t0)*1000)
+              result = {"query_id":qid,"answer":f"Error: {e}","sources":[],"model":LLM_MODEL,"latency_ms":ms,
+                        "user_id":uid,"user_tier":"unknown","token_usage":{},"error":str(e)}
+              log.exception("Failed query_id=%s", qid)
+          producer.produce(
+              topic=TOPIC_RESULTS,
+              key=qid.encode(),
+              value=json.dumps(result).encode(),
+              headers={"tier": user_tier})
+          producer.poll(0)
+          log.info("Answered query_id=%s in %dms", qid, result["latency_ms"])
+
+      running = True
+      def stop(*_): global running; running = False
+      signal.signal(signal.SIGTERM, stop)
+      signal.signal(signal.SIGINT, stop)
+
+      consumer.subscribe([TOPIC_QUERIES])
+      log.info("Subscribed to '%s'", TOPIC_QUERIES)
+      with ThreadPoolExecutor(max_workers=WORKER_THREADS, thread_name_prefix="rag") as pool:
+          futures = {}
+          try:
+              while running:
+                  msg = consumer.poll(timeout=1.0)
+                  for f in [f for f in list(futures) if f.done()]:
+                      orig = futures.pop(f)
+                      try: f.result()
+                      except Exception as e: log.error("Worker error: %s", e)
+                      consumer.commit(message=orig)
+                  if msg is None: continue
+                  if msg.error():
+                      if msg.error().code() != KafkaError._PARTITION_EOF: raise KafkaException(msg.error())
+                      continue
+                  try: json.loads(msg.value())
+                  except Exception: consumer.commit(message=msg); continue
+                  futures[pool.submit(process, msg)] = msg
+          finally:
+              for f in as_completed(futures):
+                  try: f.result()
+                  except Exception as e: log.error("Shutdown error: %s", e)
+              producer.flush(10)
+              consumer.close()
